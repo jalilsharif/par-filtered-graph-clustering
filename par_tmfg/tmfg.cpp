@@ -1,7 +1,10 @@
+#include <iostream>
+
 // #include "dbht.h"
 #include "partmfg_double.h"
 #include "profiler.h"
 #include "IO.h"
+
 
 void runDBHT(SymM<double> *W, SymM<double> *D, size_t n, size_t THRESHOLD, string method, bool use_heap, string dsname = ""){
 cout << "====" << endl;
@@ -16,10 +19,11 @@ cout << "use_heap: " << use_heap << endl;
 timer t2;t2.start();
 ParTMFGD computer = ParTMFGD(W, n, &pf, use_heap); 
 timer t;t.start();
-computer.init();           
+computer.init();   
 computer.initGainArray();                 pf.setInitTime(t2.next());
 auto clusterer = new ParDBHTTMFGD(computer.cliques.data(), computer.triangles.data(), n, computer.W, computer.P.data(), D, &pf);
 int round=0;
+cout << "sort total: "<< t.next() << endl;
 
 if(method == "prefix"){ //get best gain by scanning vertex list
     while(computer.hasUninsertedV()){

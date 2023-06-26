@@ -158,19 +158,44 @@ void ParTMFG<T, PROF>::inertMultiple(sequence<size_t> &insert_list, DBHTTMFG<T, 
 template<class T, class PROF> 
 void ParTMFG<T, PROF>::insertOne(DBHTTMFG<T, PROF> *clusterer){ // = nullptr
          // get the best vertex among all candidates
-        auto *entry_pointer = parlay::max_element(make_slice(max_clique_gains).cut(0,triangles_ind), 
-                [&](const auto &i, const auto &j){ 
-                    if(get<1>(i) == get<1>(j)) return i > j;
-                    // might not be exactly the same as MATLAB, 
-                    // because triangle id can be different
-                    return get<1>(i) < get<1>(j); 
-                });
-        auto entry = *entry_pointer;
+        
+        int depth = 1;
+
+        gainT entry;
+        if(use_max_gains_heap){
+            while(true){
+                entry = vtx_heap.front();
+                pop_heap(vtx_heap.begin(), vtx_heap.end(), heap_compare());
+                vtx_heap.pop_back();
+                if(invalid_flag[get<2>(entry)]){
+                    heapEle result = getApproxMaxGain(triangles[get<2>(entry)], depth);
+                    max_clique_gains[get<2>(entry)] = make_tuple(result.second, result.first, get<2>(entry));
+                    vtx_heap.push_back(max_clique_gains[get<2>(entry)]);
+                    push_heap(vtx_heap.begin(), vtx_heap.end(), heap_compare());
+                    invalid_flag[get<2>(entry)] = false;
+                    vtx new_v = result.second;
+                    size_t num_faces = pbbs::write_add(&vtx_to_face_inds[new_v], 1);
+                    face_store[num_faces-1+max_face_num*new_v] = get<2>(entry);
+                }
+                else{
+                    break;
+                }
+            }
+        }
+        else{
+            auto *entry_pointer = parlay::max_element(make_slice(max_clique_gains).cut(0,triangles_ind), 
+                    [&](const auto &i, const auto &j){ 
+                        if(get<1>(i) == get<1>(j)) return i > j;
+                        // might not be exactly the same as MATLAB, 
+                        // because triangle id can be different
+                        return get<1>(i) < get<1>(j); 
+                    });
+            entry = *entry_pointer;
+        }
         vtx v = get<0>(entry);
         face tri = get<2>(entry);
         vtx t1,t2,t3;
         tie(t1,t2,t3) = triangles[tri];
-
         peo[peo_ind ] = v;
         cliques[peo_ind-3] = cliqueT(t1,t2,t3,v);
         insertToP(v, t1, P_ind);
@@ -182,6 +207,7 @@ void ParTMFG<T, PROF>::insertOne(DBHTTMFG<T, PROF> *clusterer){ // = nullptr
         size_t num_faces = vtx_to_face_inds[v];
         face_store[num_faces+max_face_num*v] = triangles_ind;
         face_store[num_faces+1+max_face_num*v] = triangles_ind + 1;
+
 
         if(clusterer != nullptr){
             clusterer->updateDegrees(t1,t2,t3,v);
@@ -196,18 +222,65 @@ void ParTMFG<T, PROF>::insertOne(DBHTTMFG<T, PROF> *clusterer){ // = nullptr
         removeOneV(v);
 
         if(vertex_num == 0) return;
-if(use_heap){
+        if(use_max_gains_heap){
+            pop_heap(vtx_heap.begin(), vtx_heap.end(), heap_compare());
+            vtx_heap.pop_back();
+        }
+    if(use_corrs){
         vertex_flag[v] = false;
+
+        // Not parallelizable yet
+
+        if(use_max_gains_heap){
+            for(size_t ii = 0; ii < vtx_to_face_inds[v]; ii++){
+                face i = face_store[ii+max_face_num*v];
+                if(use_max_gains_heap){
+                    invalid_flag[i] = true;
+                    if(i == tri || i >= triangles_ind -2 ){
+                        triT new_tri = triangles[i];
+                        heapEle result = getApproxMaxGain(new_tri, depth);
+                        vtx new_v = result.second;
+                        max_clique_gains[i] = make_tuple(new_v, result.first, i);
+                        vtx_heap.push_back(max_clique_gains[i]);
+                        push_heap(vtx_heap.begin(), vtx_heap.end(), heap_compare());
+                        size_t num_faces = pbbs::write_add(&vtx_to_face_inds[new_v], 1);
+                        face_store[num_faces-1+max_face_num*new_v] = i;
+                        invalid_flag[i] = false;
+
+                    }
+                }
+
+            }
+        }
+        else{
+            for(size_t ii = 0; ii < vtx_to_face_inds[v]; ii++){
+                face i = face_store[ii+max_face_num*v];
+                triT new_tri = triangles[i];
+                heapEle result = getApproxMaxGain(new_tri, depth);
+                vtx new_v = result.second;
+                max_clique_gains[i] = make_tuple(new_v, result.first, i);
+                size_t num_faces = pbbs::write_add(&vtx_to_face_inds[new_v], 1);
+                face_store[num_faces-1+max_face_num*new_v] = i;
+            }
+        }
+
+    }
+else if(use_heap){
+        vertex_flag[v] = false;
+
         // get the best vertex and gain for each new triangle
+
         parlay::parallel_for(0, vtx_to_face_inds[v], [&](size_t ii) {
             face i = face_store[ii+max_face_num*v];
             if(i == tri || i >= triangles_ind -2 ){heapifyFace(i);}
+
             heapEle result = getMinValidHeapEle(i);
             vtx new_v = result.second;
             max_clique_gains[i] = make_tuple(new_v, result.first, i);
             size_t num_faces = pbbs::write_add(&vtx_to_face_inds[new_v], 1);
             face_store[num_faces-1+max_face_num*new_v] = i;
         });
+
 }else{
         auto in = make_slice(vertex_list).cut(vertex_start, vertex_start+vertex_num);
         // get the best vertex and gain for each new triangle
@@ -236,6 +309,8 @@ void ParTMFG<T, PROF>::init(){
         face_store = sequence<size_t>::uninitialized(max_face_num*n);
         vtx_to_face_inds = sequence<size_t>(n, 0);
 
+        invalid_flag = sequence<bool>(3*n, false);
+
         cliques[0] = maxClique();
         vtx t1, t2, t3,t4;
         tie(t1,t2,t3,t4) = cliques[0];
@@ -259,14 +334,23 @@ void ParTMFG<T, PROF>::init(){
         vertex_start = 0;
         triangles_ind = 4;
         peo_ind = 4;
-
         if(use_heap) initHeap();
+
     }
 
 template<class T, class PROF> 
 void ParTMFG<T, PROF>::initHeap(){
     heap_buffer = sequence<heapEle>::uninitialized(3*n*n); 
-    if(use_sorted_list){
+    corr_heap_buffer = sequence<heapEle>::uninitialized(n*n); 
+
+    if(use_corrs){
+        corr_sorted_list_pointer=sequence<size_t>(n, 0);
+        sorted_list_pointer=sequence<size_t>(3*n, 0);
+        parlay::parallel_for(0, n, [&](size_t v){
+            heapifyVtx(v);
+        });
+    }
+    else if(use_sorted_list){
         sorted_list_pointer=sequence<size_t>(3*n, 0);
     }else{
     heap_LR = sequence<size_t>::uninitialized(3*n*n);
@@ -277,14 +361,22 @@ void ParTMFG<T, PROF>::initHeap(){
 
 template<class T, class PROF> 
 void ParTMFG<T, PROF>::initGainArrayHeap(){
-    parlay::parallel_for(0, triangles_ind, [&](face i) {
+    //vtx_heap = new vector<gainT>;
+    vtx_heap = vector<gainT>();
+    for(face i = 0; i < triangles_ind; i++) {
         heapifyFace(i);
         heapEle result = getMinValidHeapEle(i);
         vtx v = result.second;
         max_clique_gains[i] = make_tuple(v, result.first, i);
         size_t num_faces = pbbs::write_add(&vtx_to_face_inds[v], 1);
         face_store[num_faces-1+max_face_num*v] = i;
-    });
+        if(use_max_gains_heap){
+            vtx_heap.push_back(max_clique_gains[i]);
+        }
+    }
+    if(use_max_gains_heap){
+        make_heap(vtx_heap.begin(), vtx_heap.end(), heap_compare());
+    }
 }
 
 template<class T, class PROF> 

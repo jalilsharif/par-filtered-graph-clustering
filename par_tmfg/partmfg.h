@@ -1,7 +1,7 @@
 #pragma once
 
 #include <tuple>
-#include <iostream>
+#include <iosfwd>
 #include <fstream> 
 #include <stdio.h>
 #include <stdlib.h>
@@ -49,6 +49,12 @@ struct ParTMFG{
 
     ParTMFG(SymM<T> *W_, size_t n_, PROF *_profiler, bool _use_heap=false):W(W_), n(n_), pf(_profiler), use_heap(_use_heap) {
     }
+
+    struct heap_compare{
+    bool operator()(const gainT& i,const gainT& j) const{
+        return get<1>(i) < get<1>(j);
+        }
+    };
 
     // initialize the four cliques
     void init();
@@ -204,9 +210,18 @@ struct ParTMFG{
     bool use_heap;
     sequence<heapT> heaps;
     sequence<heapEle> heap_buffer;
+    sequence<heapEle> corr_heap_buffer;
     sequence<size_t> heap_LR;
     bool use_sorted_list = true; // change to input
     sequence<size_t> sorted_list_pointer; // stores the next vertex to look at
+    sequence<size_t> corr_sorted_list_pointer;
+
+    vector<gainT> vtx_heap;
+    sequence<bool> invalid_flag;
+    bool use_corrs = true;
+    bool use_max_gains_heap = false;
+
+
 
 
     //allocate space for heap
@@ -250,6 +265,97 @@ struct ParTMFG{
 // #endif  
         return negateGain(ele);
     }
+
+
+
+    inline heapEle getMaxCorr(vtx i){
+        heapEle ele;
+        size_t ind = 0;
+        do {
+            ind = corr_sorted_list_pointer[i];
+            corr_sorted_list_pointer[i]++;
+            ele = corr_heap_buffer[i*n+ind];
+
+        }
+        while ( !vertex_flag[ele.second] && ind < n);
+        if(ind == n && !vertex_flag[ele.second]){
+            return heapEle(0, -1);
+        }
+        //cout<<ind<<' ';
+        return negateGain(ele);
+    }
+
+    /*inline heapEle getNextCorr(vtx i, size_t last_corr){
+        heapEle ele;
+        size_t ind = last_corr;
+        do {  
+            ind++;
+            ele = corr_heap_buffer[i*n+ind];
+
+        }
+        while ( !vertex_flag[ele.second] && ind < n);
+        if(ind == n){
+            return heapEle(0, -1);
+        }
+        return negateGain(ele);
+    }*/
+
+    inline heapEle getApproxMaxGain(triT triangle, size_t depth){
+        auto gainList = sequence<heapEle>::uninitialized(3 * depth);
+        int counter = 0;
+        
+        vtx t1,t2,t3;
+        tie(t1,t2,t3) = triangle;
+        vtx v = t1;
+        size_t temp_ptr = corr_sorted_list_pointer[v];            
+        for(int i = 0; i < depth; i++){
+            heapEle cur_elt = getMaxCorr(v);
+            if(cur_elt.second == -1){
+                break; 
+            }
+            if(i == 0){
+                temp_ptr = corr_sorted_list_pointer[v] - 1;
+            }
+            gainList[counter] = heapEle(computeGain(cur_elt.second, triangle), cur_elt.second);
+            counter++;
+            
+        }
+        corr_sorted_list_pointer[v] = temp_ptr;
+        v = t2;
+        temp_ptr = corr_sorted_list_pointer[v];            
+        for(int i = 0; i < depth; i++){
+            heapEle cur_elt = getMaxCorr(v);
+            if(cur_elt.second == -1){
+                break; 
+            }
+            if(i == 0){
+                temp_ptr = corr_sorted_list_pointer[v] - 1;
+            }
+            gainList[counter] = heapEle(computeGain(cur_elt.second, triangle), cur_elt.second);
+            counter++;
+            
+        }
+        corr_sorted_list_pointer[v] = temp_ptr;
+        v = t3;
+        temp_ptr = corr_sorted_list_pointer[v];            
+        for(int i = 0; i < depth; i++){
+            heapEle cur_elt = getMaxCorr(v);
+            if(cur_elt.second == -1){
+                break; 
+            }
+            if(i == 0){
+                temp_ptr = corr_sorted_list_pointer[v] - 1;
+            }
+            gainList[counter] = heapEle(computeGain(cur_elt.second, triangle), cur_elt.second);
+            counter++;
+            
+        }
+        corr_sorted_list_pointer[v] = temp_ptr;
+        
+        return *parlay::max_element(make_slice(gainList).cut(0, counter), std::less<heapEle>{});
+    }
+
+
     
     // init a heap buffer for triangles[i]
     inline void heapifyFace(face i){
@@ -260,15 +366,18 @@ struct ParTMFG{
         pf->incHeapifySize(vertex_num);
         triT t = triangles[i];
         auto in = make_slice(vertex_list).cut(vertex_start, vertex_start+vertex_num);
-        parlay::parallel_for(0, in.size(), [&](size_t v_ind) {
+        for(size_t v_ind = 0; v_ind < in.size(); v_ind++){
+        //parlay::parallel_for(0, in.size(), [&](size_t v_ind) {
             vtx v = in[v_ind];
             T gain = computeGain(v, t);
             heap_buffer[i*n+v_ind] = heapEle(-1.0*gain, v);
-        });
+        //});
+        }
         if(use_sorted_list){
         // parlay::sort_inplace(make_slice(heap_buffer).cut(i*n, i*n+vertex_num));
         // parlay::internal::seq_sort_inplace(make_slice(heap_buffer).cut(i*n, i*n+vertex_num), std::less<heapEle>{}, false);
         parlay::internal::quicksort(make_slice(heap_buffer).cut(i*n, i*n+vertex_num), std::less<heapEle>{});
+
         sorted_list_pointer[i] = 0;
        }else{
         heaps[i] = binary_min_heap<heapEle>(heap_buffer.data()+ (i*n), vertex_num, heap_LR.data()+ (i*n));
@@ -283,6 +392,18 @@ struct ParTMFG{
 //         cout << "heapify: "<<t1.next() << endl;;
 // #endif  
     }
+
+    inline void heapifyVtx(vtx i){
+        for(vtx v = 0; v < n; v++){
+            T gain = getW(i, v);
+            corr_heap_buffer[i*n+v] = heapEle(-1.0*gain, v);
+            
+        }
+        parlay::internal::quicksort(make_slice(corr_heap_buffer).cut(i*n, (i+1)*n), std::less<heapEle>{});
+        corr_sorted_list_pointer[i] = 0;
+    }
+
+
 
     //// used for heap
 
@@ -320,5 +441,50 @@ struct ParTMFG{
             });
         vertex_start = new_vertex_start;
     }
+
+    /*void compareParent(face i, face tri){
+        vtx best = getMinValidHeapEle(i).second;
+        int k = 0;
+        size_t ind = 0;
+
+        heapEle ele;
+        do {
+
+                ele = heap_buffer[tri*n+ind];
+                ind++;
+                if(vertex_flag[ele.second]){
+                    k++;
+                    
+                }
+                if(ele.second==best){
+                        break;
+                    }
+
+        }
+        while ( ind<n );
+        cout<<k<<' ';
+    }*/
+
+    /*void bestIdx(vtx start, vtx best){
+        int k = 0;
+        size_t ind = 0;
+
+        heapEle ele;
+        do {
+
+                ele = corr_heap_buffer[start*n+ind];
+                ind++;
+                if(vertex_flag[ele.second]){
+                    k++;
+                    
+                }
+                if(ele.second==best){
+                        break;
+                    }
+
+        }
+        while ( ind<n );
+        cout<<k<<' ';
+    }*/
 };
 
