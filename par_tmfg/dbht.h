@@ -93,7 +93,7 @@ struct DBHTTMFG{
         t2c[0] = 0;t2c[1] = 0;t2c[2] = 0;t2c[3] = 0;
 
         tree = (tbbTree *)malloc(_n * sizeof(tbbTree));
-        degrees = (double *)malloc(n * sizeof(double));
+        degrees = (T*)malloc(n * sizeof(T));
         directions = (bool *)malloc((n-3) * sizeof(bool)); //init?
         converging = parlay::sequence<bool>(n, true);
 

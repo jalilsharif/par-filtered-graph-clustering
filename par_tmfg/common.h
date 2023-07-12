@@ -1,7 +1,7 @@
 #pragma once
 
 #include <tuple>
-#include <iosfwd>
+#include <iostream>
 #include <fstream> 
 #include <stdio.h>
 #include <stdlib.h>

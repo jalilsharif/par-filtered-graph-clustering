@@ -1,6 +1,7 @@
 #include "partmfg.h"
 #include "dbht.h"
 
+
 template<class T, class PROF> 
 void ParTMFG<T, PROF>::initGainArray(){
         if(!hasUninsertedV()) return;
@@ -155,11 +156,15 @@ void ParTMFG<T, PROF>::inertMultiple(sequence<size_t> &insert_list, DBHTTMFG<T, 
         filterVbyFlag();
     }
 
+
+
+
 template<class T, class PROF> 
 void ParTMFG<T, PROF>::insertOne(DBHTTMFG<T, PROF> *clusterer){ // = nullptr
          // get the best vertex among all candidates
         
         int depth = 1;
+
 
         gainT entry;
         if(use_max_gains_heap){
@@ -183,17 +188,38 @@ void ParTMFG<T, PROF>::insertOne(DBHTTMFG<T, PROF> *clusterer){ // = nullptr
             }
         }
         else{
-            auto *entry_pointer = parlay::max_element(make_slice(max_clique_gains).cut(0,triangles_ind), 
-                    [&](const auto &i, const auto &j){ 
-                        if(get<1>(i) == get<1>(j)) return i > j;
-                        // might not be exactly the same as MATLAB, 
-                        // because triangle id can be different
-                        return get<1>(i) < get<1>(j); 
-                    });
-            entry = *entry_pointer;
+            if(!use_corrs){
+                auto *entry_pointer = parlay::max_element(make_slice(max_clique_gains).cut(0,triangles_ind), 
+                        [&](const auto &i, const auto &j){ 
+                            if(get<1>(i) == get<1>(j)) return i > j;
+                            // might not be exactly the same as MATLAB, 
+                            // because triangle id can be different
+                            return get<1>(i) < get<1>(j); 
+                        });
+                entry = *entry_pointer;
+            }
+
         }
-        vtx v = get<0>(entry);
-        face tri = get<2>(entry);
+
+        /*if(peo_ind % block_freq == block_freq - 1){
+            parlay::parallel_for(0, n, [&](size_t v) {
+                reorganize_vtx(v);
+            });
+        }*/
+        vtx v;
+        face tri;
+        //vtx v = get<0>(entry);
+        if(use_corrs && !use_max_gains_heap){
+            tri = argmin2((int*)(max_gains_array.data()), triangles_ind);//get<2>(entry);
+            v = max_vtx_array[tri];
+        }
+        else{
+            v = get<0>(entry);
+            tri = get<2>(entry);
+        }
+
+        //face 
+        
         vtx t1,t2,t3;
         tie(t1,t2,t3) = triangles[tri];
         peo[peo_ind ] = v;
@@ -218,8 +244,12 @@ void ParTMFG<T, PROF>::insertOne(DBHTTMFG<T, PROF> *clusterer){ // = nullptr
         triangles_ind += 2;
         P_ind += 3;
         vtx_to_face_inds[v]+=2;
-
-        removeOneV(v);
+        if(use_corrs){
+            vertex_num = n - peo_ind;
+        }
+        else{
+            removeOneV(v);
+        }   
 
         if(vertex_num == 0) return;
         if(use_max_gains_heap){
@@ -253,12 +283,30 @@ void ParTMFG<T, PROF>::insertOne(DBHTTMFG<T, PROF> *clusterer){ // = nullptr
             }
         }
         else{
+            /*auto update_set = parlay::hashtable(3 * vtx_to_face_inds[v], parlay::hash_numeric<T>());
+            parlay::parallel_for(0, vtx_to_face_inds[v], [&](size_t ii) {
+                face i = face_store[ii+max_face_num*v];
+                triT new_tri = triangles[i];
+                vtx v1, v2, v3;
+                tie(v1,v2,v3) = new_tri;
+                update_set.insert(v1);
+                update_set.insert(v2);
+                update_set.insert(v3);
+
+            });
+            sequence<T> vertices = update_set.entries();
+            parlay::parallel_for(0, vertices.size(), [&](size_t vt) {
+                getMaxCorr(vt);
+                corr_sorted_list_pointer[vt]--;
+            });*/
             for(size_t ii = 0; ii < vtx_to_face_inds[v]; ii++){
                 face i = face_store[ii+max_face_num*v];
                 triT new_tri = triangles[i];
                 heapEle result = getApproxMaxGain(new_tri, depth);
                 vtx new_v = result.second;
                 max_clique_gains[i] = make_tuple(new_v, result.first, i);
+                max_gains_array[i] = (float)(result.first);
+                max_vtx_array[i] = new_v;
                 size_t num_faces = pbbs::write_add(&vtx_to_face_inds[new_v], 1);
                 face_store[num_faces-1+max_face_num*new_v] = i;
             }
@@ -311,7 +359,13 @@ void ParTMFG<T, PROF>::init(){
 
         invalid_flag = sequence<bool>(3*n, false);
 
+        corr_second_pointer = sequence<size_t>(n, block_freq + add_buffer);
+
+        max_gains_array = sequence<float>::uninitialized(3*n);
+        max_vtx_array = sequence<vtx>::uninitialized(3*n);
+
         cliques[0] = maxClique();
+
         vtx t1, t2, t3,t4;
         tie(t1,t2,t3,t4) = cliques[0];
         peo[0] = t1; peo[1] = t2; peo[2] = t3; peo[3] = t4;
@@ -342,19 +396,24 @@ template<class T, class PROF>
 void ParTMFG<T, PROF>::initHeap(){
     heap_buffer = sequence<heapEle>::uninitialized(3*n*n); 
     corr_heap_buffer = sequence<heapEle>::uninitialized(n*n); 
+    corr_list = sequence<vtx>::uninitialized(n*n); 
+
 
     if(use_corrs){
         corr_sorted_list_pointer=sequence<size_t>(n, 0);
         sorted_list_pointer=sequence<size_t>(3*n, 0);
+
+        //timer t; t.start();
         parlay::parallel_for(0, n, [&](size_t v){
             heapifyVtx(v);
         });
+        //cout<<"sort: "<<t.next()<<'\n';
     }
     else if(use_sorted_list){
         sorted_list_pointer=sequence<size_t>(3*n, 0);
     }else{
-    heap_LR = sequence<size_t>::uninitialized(3*n*n);
-    heaps=sequence<heapT>::uninitialized(3*n);
+        heap_LR = sequence<size_t>::uninitialized(3*n*n);
+        heaps=sequence<heapT>::uninitialized(3*n);
         // heaps=sequence<heapT>(3*n); for PAM
     }
 }
@@ -368,6 +427,8 @@ void ParTMFG<T, PROF>::initGainArrayHeap(){
         heapEle result = getMinValidHeapEle(i);
         vtx v = result.second;
         max_clique_gains[i] = make_tuple(v, result.first, i);
+        max_gains_array[i] = (float)(result.first);
+        max_vtx_array[i] = v;
         size_t num_faces = pbbs::write_add(&vtx_to_face_inds[v], 1);
         face_store[num_faces-1+max_face_num*v] = i;
         if(use_max_gains_heap){
@@ -381,22 +442,27 @@ void ParTMFG<T, PROF>::initGainArrayHeap(){
 
 template<class T, class PROF> 
 cliqueT ParTMFG<T, PROF>::maxClique(){
-        auto Wseq = parlay::delayed_seq<T>(n*n, [&](size_t i) {
-            // if(i/n == i%n) return 0.0;
-            return getW(i/n, i%n);
-        });
-        double W_mean = parlay::reduce(Wseq) / n / n;
-        // auto W_larger = parlay::delayed_seq<T>(n*n, [&](long i){ return getW(i/n, i%n) > W_mean? getW(i/n, i%n):0; });
-        auto W_larger = parlay::delayed_seq<T>(n*n, [&](long i){ return Wseq[i] > W_mean? Wseq[i]:0; });
+    auto Wseq = parlay::delayed_seq<T>(n*n, [&](size_t i) {
+        // if(i/n == i%n) return 0.0;
+        return getW(i/n, i%n);
+    });
+    double W_mean = parlay::reduce(Wseq) / n / n;
+    // auto W_larger = parlay::delayed_seq<T>(n*n, [&](long i){ return getW(i/n, i%n) > W_mean? getW(i/n, i%n):0; });
+    auto W_larger = parlay::delayed_seq<T>(n*n, [&](long i){ return Wseq[i] > W_mean? Wseq[i]:0; });
 
 
-        sequence<pair<T, vtx>> v_weight = sequence<pair<T, vtx>>(n);
-        parlay::parallel_for(0, n, [&](size_t i) {
-            int start = i*n; int end = (i+1)*n;
-            v_weight[i] = make_pair(parlay::reduce(make_slice(W_larger).cut(start,end)), i);
-        });
+    sequence<pair<T, vtx>> v_weight = sequence<pair<T, vtx>>(n);
+    parlay::parallel_for(0, n, [&](size_t i) {
+        /*int start = i*n; int end = (i+1)*n;
+        int sum = 0;
+        for(int z = i * n; z < (i+1)*n; z++){
+            sum += (Wseq[i] > W_mean) * Wseq[i];
+        }
+        v_weight[i] = make_pair(sum, i);*/
+        v_weight[i] = make_pair(parlay::reduce(make_slice(W_larger).cut(i*n, (i+1)*n)), i);
+    });
 
-        parlay::sort_inplace(v_weight); // can improve to 4 max operations
+    parlay::sort_inplace(v_weight); // can improve to 4 max operations
 
-        return cliqueT(get<1>(v_weight[n-1]), get<1>(v_weight[n-2]), get<1>(v_weight[n-3]), get<1>(v_weight[n-4]));
-    }
+    return cliqueT(get<1>(v_weight[n-1]), get<1>(v_weight[n-2]), get<1>(v_weight[n-3]), get<1>(v_weight[n-4]));
+}

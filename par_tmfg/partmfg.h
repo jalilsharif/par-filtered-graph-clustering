@@ -1,18 +1,37 @@
 #pragma once
 
 #include <tuple>
-#include <iosfwd>
+#include <iostream>
 #include <fstream> 
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
 #include <limits>
 #include <algorithm>
+#include <immintrin.h>
 
 
 #include "parlay/primitives.h"
 #include "parlay/sequence.h"
 #include "parlay/delayed_sequence.h"
+#include "parlay/hash_table.h"
+
+#include <boost/sort/spreadsort/float_sort.hpp>
+
+#define VQSORT_ONLY_STATIC 1
+#define VQSORT_PRINT 0
+
+#include "hwy/base.h"
+
+#include "hwy/contrib/sort/algo-inl.h"
+#include "hwy/contrib/sort/result-inl.h"
+#include "hwy/contrib/sort/traits128-inl.h"
+#include <hwy/contrib/sort/vqsort.h>
+#include <hwy/aligned_allocator.h>
+#include <hwy/highway.h>
+#include <hwy/nanobenchmark.h>
+#include "hwy/tests/test_util-inl.h"
+
 
 #include "gettime.h"
 #include "atomics.h"
@@ -24,6 +43,8 @@
 using namespace std;
 using parlay::sequence;	
 using parlay::slice;	
+using parlay::hashtable;
+using parlay::hash_numeric;
 
 template<class T, class PROF> 
 struct ParTMFG{
@@ -55,6 +76,12 @@ struct ParTMFG{
         return get<1>(i) < get<1>(j);
         }
     };
+
+    struct rightshift {
+         long long operator()(heapEle e, unsigned offset) { return boost::sort::spreadsort::float_mem_cast<T, long long>(e.first * 8192) >> offset; }
+    };
+
+
 
     // initialize the four cliques
     void init();
@@ -211,6 +238,9 @@ struct ParTMFG{
     sequence<heapT> heaps;
     sequence<heapEle> heap_buffer;
     sequence<heapEle> corr_heap_buffer;
+
+    sequence<vtx> corr_list;
+
     sequence<size_t> heap_LR;
     bool use_sorted_list = true; // change to input
     sequence<size_t> sorted_list_pointer; // stores the next vertex to look at
@@ -219,7 +249,17 @@ struct ParTMFG{
     vector<gainT> vtx_heap;
     sequence<bool> invalid_flag;
     bool use_corrs = true;
-    bool use_max_gains_heap = false;
+    bool use_max_gains_heap = true;
+
+    sequence<size_t> corr_second_pointer;
+
+    sequence<float> max_gains_array;
+    sequence<vtx> max_vtx_array;
+
+    
+
+    size_t block_freq = 500;
+    size_t add_buffer = 5;
 
 
 
@@ -266,95 +306,158 @@ struct ParTMFG{
         return negateGain(ele);
     }
 
+    // Returns the vertex with max correlation to vertex i that hasn't been inserted yet into the TMFG
+    // Returns -1 if there is no such vertex
+    // Has support for AVX512/AVX2
+    #if __AVX512F__
+    inline vtx getMaxCorr(vtx i){
+        vtx ele;
+        size_t ind = 0;
+        ind = corr_sorted_list_pointer[i];
+        
+        corr_sorted_list_pointer[i]++;
+        ele = corr_list[i*n+ind];
+        if(vertex_flag[ele]){
+            return ele;
+        }
+        ind = corr_sorted_list_pointer[i];
+        while(ind < n - 17){
+            __m512i els = _mm512_loadu_si512((__m512i_u*)(corr_list.data() + i * n + ind));
+            __m512i flags = _mm512_i32gather_epi32(els, (int*)(vertex_flag.data()), sizeof(bool));
+            __mmask16 masked_flags = _mm512_cmpneq_epi32_mask((flags & _mm512_set1_epi32(1)), _mm512_set1_epi32(0));
 
+            if((int)masked_flags != 0){
+                int first_idx = __builtin_ctz((int)masked_flags);
+                corr_sorted_list_pointer[i] += (first_idx + 1);
+                return corr_list[i * n + ind + first_idx];
+            }
+            corr_sorted_list_pointer[i] += 16;
+            ind = corr_sorted_list_pointer[i];
+            
+        }
 
-    inline heapEle getMaxCorr(vtx i){
-        heapEle ele;
+        while(!vertex_flag[ele] && ind < n){
+            ind = corr_sorted_list_pointer[i];
+            corr_sorted_list_pointer[i]++;
+            ele = corr_list[i*n+ind];
+
+        }
+        if(ind == n && !vertex_flag[ele]){
+            return -1;
+        }
+        return ele;
+    }
+    #elif __AVX2__
+    inline vtx getMaxCorr(vtx i){
+        vtx ele;
+        size_t ind = 0;
+        ind = corr_sorted_list_pointer[i];
+        
+        corr_sorted_list_pointer[i]++;
+        ele = corr_list[i*n+ind];
+        if(vertex_flag[ele]){
+            return ele;
+        }
+        ind = corr_sorted_list_pointer[i];
+        while(ind < n - 9){
+            __m256i els = _mm256_loadu_si256((__m256i_u*)(corr_list.data() + i * n + ind));
+            __m256i flags = _mm256_i32gather_epi32((int*)(vertex_flag.data()), els, sizeof(bool));
+            
+            int masked_flags = _mm256_movemask_ps(_mm256_castsi256_ps(_mm256_cmpeq_epi32((flags & _mm256_set1_epi32(1)), _mm256_set1_epi32(1))));
+
+            
+            if(masked_flags != 0){
+                int first_idx = __builtin_ctz((int)masked_flags);
+                corr_sorted_list_pointer[i] += (first_idx + 1);
+                return corr_list[i * n + ind + first_idx];
+            }
+            corr_sorted_list_pointer[i] += 8;
+            ind = corr_sorted_list_pointer[i];
+            
+        }
+
+        while(!vertex_flag[ele] && ind < n){
+            ind = corr_sorted_list_pointer[i];
+            corr_sorted_list_pointer[i]++;
+            ele = corr_list[i*n+ind];
+
+        }
+        if(ind == n && !vertex_flag[ele]){
+            return -1;
+        }
+        return ele;
+    }
+    #else
+    inline vtx getMaxCorr(vtx i){
+        vtx ele;
         size_t ind = 0;
         do {
             ind = corr_sorted_list_pointer[i];
             corr_sorted_list_pointer[i]++;
-            ele = corr_heap_buffer[i*n+ind];
+            ele = corr_list[i*n+ind];
 
         }
-        while ( !vertex_flag[ele.second] && ind < n);
-        if(ind == n && !vertex_flag[ele.second]){
-            return heapEle(0, -1);
+        while ( !vertex_flag[ele] && ind < n);
+        if(ind == n && !vertex_flag[ele]){
+            return -1;
         }
-        //cout<<ind<<' ';
-        return negateGain(ele);
+        return ele;
     }
+    #endif // AVX
 
-    /*inline heapEle getNextCorr(vtx i, size_t last_corr){
-        heapEle ele;
-        size_t ind = last_corr;
-        do {  
-            ind++;
-            ele = corr_heap_buffer[i*n+ind];
 
-        }
-        while ( !vertex_flag[ele.second] && ind < n);
-        if(ind == n){
-            return heapEle(0, -1);
-        }
-        return negateGain(ele);
-    }*/
-
+    // finds the closest uninserted vertex to each of the face's three vertices
+    // and calculates the uninserted vertex with the max gain
     inline heapEle getApproxMaxGain(triT triangle, size_t depth){
         auto gainList = sequence<heapEle>::uninitialized(3 * depth);
         int counter = 0;
         
         vtx t1,t2,t3;
         tie(t1,t2,t3) = triangle;
-        vtx v = t1;
-        size_t temp_ptr = corr_sorted_list_pointer[v];            
-        for(int i = 0; i < depth; i++){
-            heapEle cur_elt = getMaxCorr(v);
-            if(cur_elt.second == -1){
-                break; 
+        vtx vertices[3] = {t1, t2, t3};
+        for(vtx v : vertices){
+            size_t temp_ptr = corr_sorted_list_pointer[v];            
+            for(int i = 0; i < depth; i++){
+                vtx cur_elt = getMaxCorr(v);
+                if(cur_elt == -1){
+                    break; 
+                }
+                if(i == 0){
+                    temp_ptr = corr_sorted_list_pointer[v] - 1;
+                }
+                gainList[counter] = heapEle(computeGain(cur_elt, triangle), cur_elt);
+                counter++;
+                
             }
-            if(i == 0){
-                temp_ptr = corr_sorted_list_pointer[v] - 1;
-            }
-            gainList[counter] = heapEle(computeGain(cur_elt.second, triangle), cur_elt.second);
-            counter++;
-            
+            corr_sorted_list_pointer[v] = temp_ptr;
         }
-        corr_sorted_list_pointer[v] = temp_ptr;
-        v = t2;
-        temp_ptr = corr_sorted_list_pointer[v];            
-        for(int i = 0; i < depth; i++){
-            heapEle cur_elt = getMaxCorr(v);
-            if(cur_elt.second == -1){
-                break; 
-            }
-            if(i == 0){
-                temp_ptr = corr_sorted_list_pointer[v] - 1;
-            }
-            gainList[counter] = heapEle(computeGain(cur_elt.second, triangle), cur_elt.second);
-            counter++;
-            
-        }
-        corr_sorted_list_pointer[v] = temp_ptr;
-        v = t3;
-        temp_ptr = corr_sorted_list_pointer[v];            
-        for(int i = 0; i < depth; i++){
-            heapEle cur_elt = getMaxCorr(v);
-            if(cur_elt.second == -1){
-                break; 
-            }
-            if(i == 0){
-                temp_ptr = corr_sorted_list_pointer[v] - 1;
-            }
-            gainList[counter] = heapEle(computeGain(cur_elt.second, triangle), cur_elt.second);
-            counter++;
-            
-        }
-        corr_sorted_list_pointer[v] = temp_ptr;
-        
         return *parlay::max_element(make_slice(gainList).cut(0, counter), std::less<heapEle>{});
     }
 
+    // compresses the correlation list to remove some uninserted vertices
+    inline void reorganize_vtx(vtx v){
+        int valids = 0;
+        corr_sorted_list_pointer[v] = 0;
+        for(int i = 0; i < block_freq + add_buffer; i++){
+            vtx ele = corr_list[v*n+i];
+            if(vertex_flag[ele]){
+                corr_list[v*n+valids] = ele;
+                valids++;
+            }
+        }
+        for(int i = corr_second_pointer[v]; i<n; i++){
+            vtx ele = corr_list[v*n+i];
+            corr_second_pointer[v]++;
+            if(vertex_flag[ele]){
+                corr_list[v*n+valids] = ele;
+                valids++;
+                if(valids >= block_freq + add_buffer){
+                    break;
+                }
+            }
+            
+        }
+    }
 
     
     // init a heap buffer for triangles[i]
@@ -366,19 +469,38 @@ struct ParTMFG{
         pf->incHeapifySize(vertex_num);
         triT t = triangles[i];
         auto in = make_slice(vertex_list).cut(vertex_start, vertex_start+vertex_num);
-        for(size_t v_ind = 0; v_ind < in.size(); v_ind++){
-        //parlay::parallel_for(0, in.size(), [&](size_t v_ind) {
+        /*parlay::parallel_for(0, in.size(), [&](size_t v_ind) {
             vtx v = in[v_ind];
             T gain = computeGain(v, t);
             heap_buffer[i*n+v_ind] = heapEle(-1.0*gain, v);
-        //});
-        }
+        });*/
         if(use_sorted_list){
+            vector<uint64_t> z = vector<uint64_t>(vertex_num);
+
+            for(size_t v = 0; v < vertex_num; v++){
+                T gain = -1.0 * computeGain(in[v], t);
+                //corr_heap_buffer[i*n+v] = heapEle(-1.0*gain, v);
+                float fl_gain = (float)(gain+3);
+                uint32_t f_gain;
+                memcpy(&f_gain, &(fl_gain), sizeof(float));
+                //f_gain+=v;
+                z[v] = (((uint64_t)f_gain) << 32) + in[v];
+            }   
         // parlay::sort_inplace(make_slice(heap_buffer).cut(i*n, i*n+vertex_num));
         // parlay::internal::seq_sort_inplace(make_slice(heap_buffer).cut(i*n, i*n+vertex_num), std::less<heapEle>{}, false);
-        parlay::internal::quicksort(make_slice(heap_buffer).cut(i*n, i*n+vertex_num), std::less<heapEle>{});
-
+        //parlay::internal::quicksort(make_slice(heap_buffer).cut(i*n, i*n+vertex_num), std::less<heapEle>{});
+        hwy::VQSort(&z[0], vertex_num, hwy::SortAscending());
+        for(vtx v = 0; v < vertex_num; v++){
+            //float d_gain;
+            //uint32_t u_gain = (uint32_t)(z[v] >> 32);
+            //memcpy(&d_sgain, &(u_gain), 4);
+            uint32_t f_gain = (uint32_t)(z[v]>>32);
+            float fl_gain;
+            memcpy(&fl_gain, &(f_gain), sizeof(float));
+            heap_buffer[i*n+v]=heapEle((T)(fl_gain-3), (uint32_t)(z[v]));
+        }
         sorted_list_pointer[i] = 0;
+
        }else{
         heaps[i] = binary_min_heap<heapEle>(heap_buffer.data()+ (i*n), vertex_num, heap_LR.data()+ (i*n));
         heaps[i].heapify();
@@ -391,16 +513,30 @@ struct ParTMFG{
 //         cout << vertex_num << endl;
 //         cout << "heapify: "<<t1.next() << endl;;
 // #endif  
+
+
     }
 
+    // sorts the vertices by correlation with a given vertex
     inline void heapifyVtx(vtx i){
+        vector<uint64_t> z = vector<uint64_t>(n);
         for(vtx v = 0; v < n; v++){
-            T gain = getW(i, v);
-            corr_heap_buffer[i*n+v] = heapEle(-1.0*gain, v);
-            
+            T corr = getW(i, v);
+            // since correlations are between -1 and 1, add 1 to ensure corr is non-negative 
+            // so conversion to unsigned integer preserves order
+            float fl_corr = (float)(-1.0*corr+1);
+            uint32_t f_corr;
+            memcpy(&f_corr, &(fl_corr), sizeof(float));
+            z[v] = (((uint64_t)f_corr) << 32) + v;
         }
-        parlay::internal::quicksort(make_slice(corr_heap_buffer).cut(i*n, (i+1)*n), std::less<heapEle>{});
+        hwy::VQSort(&z[0], n, hwy::SortAscending());
+        //std::sort(&z[0], &z[0] + n);
+
         corr_sorted_list_pointer[i] = 0;
+        for(vtx v = 0; v < n; v++){
+            // chop off the correlation weight to leave only the vertex number
+            corr_list[i*n+v]=(uint32_t)(z[v]);
+        }
     }
 
 
@@ -486,5 +622,58 @@ struct ParTMFG{
         while ( ind<n );
         cout<<k<<' ';
     }*/
+
+    //https://en.algorithmica.org/hpc/algorithms/argmin/
+    int argmin2(int *a, int n) {
+
+        if(n<32){
+            int k = 0;
+
+            for (int i = 0; i < n; i++)
+                if (a[i] > a[k])
+                    k = i;
+
+            return k;
+        }
+
+        int max = INT_MIN, idx = 0;
+        
+        
+        __m256i p = _mm256_set1_epi32(max);
+
+        for (int i = 0; i < n - (n % 32); i += 32) {
+            __m256i y1 = _mm256_load_si256((__m256i*) &a[i]);
+            __m256i y2 = _mm256_load_si256((__m256i*) &a[i + 8]);
+            __m256i y3 = _mm256_load_si256((__m256i*) &a[i + 16]);
+            __m256i y4 = _mm256_load_si256((__m256i*) &a[i + 24]);
+            y1 = _mm256_max_epi32(y1, y2);
+            y3 = _mm256_max_epi32(y3, y4);
+            y1 = _mm256_max_epi32(y1, y3);
+            __m256i mask = _mm256_cmpgt_epi32(y1, p);
+            if (!_mm256_testz_si256(mask, mask)) { [[unlikely]]
+                idx = i;
+                for (int j = i; j < i + 32; j++)
+                    max = (a[j] > max ? a[j] : max);
+                p = _mm256_set1_epi32(max);
+            }
+        }
+
+        int k = idx + 31;
+
+        
+
+
+        for (int i = idx; i < idx + 32; i++)
+            if (a[i] == max){
+                k = i;
+                break;
+            }
+
+        for (int i = n - (n % 32); i < n; i++)
+            if (a[i] > a[k])
+                k = i;
+
+        return k;
+    }
 };
 

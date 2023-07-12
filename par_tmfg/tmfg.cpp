@@ -54,7 +54,6 @@ cout << "tmfg total: "<< t.next() << endl;
 cout << "round: " << round << endl;
 computer.computeCost();
 pf.report();
-
 t.next();
 clusterer->APSP();
 cout << "APSP total: "<< t.next() << endl;

@@ -9,6 +9,8 @@ using namespace std;
 // efficient way to read matrix file?
 // read a matrix file to sequence A, first two numbers are rows and columns
 
+
+
 using vtx=int;
 using face=int;
 using cliqueT=tuple<vtx,vtx,vtx,vtx>;
