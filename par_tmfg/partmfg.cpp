@@ -100,19 +100,63 @@ void ParTMFG<T, PROF>::updateGainArrayHeap(sequence<size_t> &insert_list){
 #ifdef DEBUG
         checkGains(2*insert_list.size());
 #endif
-        size_t triangles_ind_prev = triangles_ind - 2*insert_list.size();
-        parlay::parallel_for(0, v_list.size(), [&](size_t j) {
-            vtx old_v = v_list[j].first; face tri = v_list[j].second;
-            parlay::parallel_for(0, vtx_to_face_inds[old_v], [&](size_t ii) {
-                face i = face_store[ii+max_face_num*old_v];
-                if(i == tri || i >= triangles_ind_prev ){heapifyFace(i);}
-                heapEle result = getMinValidHeapEle(i);
-                vtx new_v = result.second;
-                max_clique_gains[i] = make_tuple(new_v, result.first, i);
-                size_t num_faces = pbbs::write_add(&vtx_to_face_inds[new_v], 1);
-                face_store[num_faces-1+max_face_num*new_v] = i; 
+        if(use_corrs){
+            auto indices = sequence<size_t>::uninitialized(v_list.size());
+            for(int i = 0; i < v_list.size(); i++){
+                indices[i] = vtx_to_face_inds[v_list[i].first];
+            }
+            
+            size_t max_idx = *parlay::max_element(indices, std::less<size_t>{});
+            auto update_set = parlay::hashtable(3 * max_idx * v_list.size(), parlay::hash_numeric<T>());
+            parlay::parallel_for(0, (size_t)v_list.size(), [&](size_t j) {
+                vtx v = v_list[j].first;
+                for(size_t ii = 0; ii < vtx_to_face_inds[v]; ii++) {
+                    face i = face_store[ii+max_face_num*v];
+                    triT new_tri = triangles[i];
+                    vtx v1, v2, v3;
+                    tie(v1,v2,v3) = new_tri;
+                    update_set.insert(v1);
+                    update_set.insert(v2);
+                    update_set.insert(v3);
+
+                }
             });
-        });
+            sequence<T> vertices = update_set.entries();
+            parlay::parallel_for(0, vertices.size(), [&](size_t vt) {
+                getMaxCorr(vertices[vt]);
+                corr_sorted_list_pointer[vertices[vt]]--;
+            });
+            parlay::parallel_for(0, (size_t)v_list.size(), [&](size_t j) {
+                vtx v = v_list[j].first;
+                for(size_t ii = 0; ii < vtx_to_face_inds[v]; ii++) {
+                    face i = face_store[ii+max_face_num*v];
+                    triT new_tri = triangles[i];
+                    heapEle result = getFastMaxGain(new_tri, 1);
+                    vtx new_v = result.second;
+                    max_clique_gains[i] = make_tuple(new_v, result.first, i);
+                    max_gains_array[i] = (float)(result.first);
+                    max_vtx_array[i] = new_v;
+                    size_t num_faces = pbbs::write_add(&vtx_to_face_inds[new_v], 1);
+                    face_store[num_faces-1+max_face_num*new_v] = i;
+                }
+            });
+        }
+        else{
+            size_t triangles_ind_prev = triangles_ind - 2*insert_list.size();
+            parlay::parallel_for(0, v_list.size(), [&](size_t j) {
+                vtx old_v = v_list[j].first; face tri = v_list[j].second;
+                parlay::parallel_for(0, vtx_to_face_inds[old_v], [&](size_t ii) {
+                    face i = face_store[ii+max_face_num*old_v];
+                    if(i == tri || i >= triangles_ind_prev ){heapifyFace(i);}
+                    heapEle result = getMinValidHeapEle(i);
+                    vtx new_v = result.second;
+                    max_clique_gains[i] = make_tuple(new_v, result.first, i);
+                    size_t num_faces = pbbs::write_add(&vtx_to_face_inds[new_v], 1);
+                    face_store[num_faces-1+max_face_num*new_v] = i; 
+                });
+            });
+        }
+
     }
 
 template<class T, class PROF> 
@@ -188,7 +232,7 @@ void ParTMFG<T, PROF>::insertOne(DBHTTMFG<T, PROF> *clusterer){ // = nullptr
             }
         }
         else{
-            if(!use_corrs){
+            if(true){
                 auto *entry_pointer = parlay::max_element(make_slice(max_clique_gains).cut(0,triangles_ind), 
                         [&](const auto &i, const auto &j){ 
                             if(get<1>(i) == get<1>(j)) return i > j;
@@ -209,7 +253,7 @@ void ParTMFG<T, PROF>::insertOne(DBHTTMFG<T, PROF> *clusterer){ // = nullptr
         vtx v;
         face tri;
         //vtx v = get<0>(entry);
-        if(use_corrs && !use_max_gains_heap){
+        if(false && use_corrs && !use_max_gains_heap){
             tri = argmin2((int*)(max_gains_array.data()), triangles_ind);//get<2>(entry);
             v = max_vtx_array[tri];
         }
@@ -283,7 +327,7 @@ void ParTMFG<T, PROF>::insertOne(DBHTTMFG<T, PROF> *clusterer){ // = nullptr
             }
         }
         else{
-            /*auto update_set = parlay::hashtable(3 * vtx_to_face_inds[v], parlay::hash_numeric<T>());
+            auto update_set = parlay::hashtable(3 * vtx_to_face_inds[v], parlay::hash_numeric<T>());
             parlay::parallel_for(0, vtx_to_face_inds[v], [&](size_t ii) {
                 face i = face_store[ii+max_face_num*v];
                 triT new_tri = triangles[i];
@@ -296,20 +340,20 @@ void ParTMFG<T, PROF>::insertOne(DBHTTMFG<T, PROF> *clusterer){ // = nullptr
             });
             sequence<T> vertices = update_set.entries();
             parlay::parallel_for(0, vertices.size(), [&](size_t vt) {
-                getMaxCorr(vt);
-                corr_sorted_list_pointer[vt]--;
-            });*/
-            for(size_t ii = 0; ii < vtx_to_face_inds[v]; ii++){
+                getMaxCorr(vertices[vt]);
+                corr_sorted_list_pointer[vertices[vt]]--;
+            });
+            parlay::parallel_for(0, vtx_to_face_inds[v], [&](size_t ii){
                 face i = face_store[ii+max_face_num*v];
                 triT new_tri = triangles[i];
-                heapEle result = getApproxMaxGain(new_tri, depth);
+                heapEle result = getFastMaxGain(new_tri, depth);
                 vtx new_v = result.second;
                 max_clique_gains[i] = make_tuple(new_v, result.first, i);
                 max_gains_array[i] = (float)(result.first);
                 max_vtx_array[i] = new_v;
                 size_t num_faces = pbbs::write_add(&vtx_to_face_inds[new_v], 1);
                 face_store[num_faces-1+max_face_num*new_v] = i;
-            }
+            });
         }
 
     }

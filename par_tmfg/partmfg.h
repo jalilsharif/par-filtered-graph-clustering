@@ -68,7 +68,8 @@ struct ParTMFG{
 
     PROF *pf;
 
-    ParTMFG(SymM<T> *W_, size_t n_, PROF *_profiler, bool _use_heap=false):W(W_), n(n_), pf(_profiler), use_heap(_use_heap) {
+    ParTMFG(SymM<T> *W_, size_t n_, PROF *_profiler, bool _use_corrs, bool _use_gains_heap, bool _use_highway, bool _use_heap=false):
+    W(W_), n(n_), pf(_profiler), use_corrs(_use_corrs), use_max_gains_heap(_use_gains_heap), use_highway(_use_highway), use_heap(_use_heap){
     }
 
     struct heap_compare{
@@ -148,6 +149,8 @@ struct ParTMFG{
     inline size_t getTrianglesNum(){return triangles_ind;}
 
     T computeCost(){
+        ofstream outfile;
+        outfile.open("timedata.txt", std::ios_base::app);
       // compute the total gain here
         T total_cost = 0;
         for(size_t i=0; i<P_ind; ++ i){
@@ -155,8 +158,8 @@ struct ParTMFG{
             total_cost += get<2>(P[i]);
         }
 
-        cout << std::setprecision(20) << 2*total_cost << endl;
-        cout << P_ind << endl; 
+        outfile << std::setprecision(20) << 2*total_cost << endl;
+        outfile << P_ind << endl; 
         return 2*total_cost;   
     }
 
@@ -248,8 +251,9 @@ struct ParTMFG{
 
     vector<gainT> vtx_heap;
     sequence<bool> invalid_flag;
-    bool use_corrs = true;
-    bool use_max_gains_heap = true;
+    bool use_corrs;
+    bool use_max_gains_heap;
+    bool use_highway;
 
     sequence<size_t> corr_second_pointer;
 
@@ -305,6 +309,7 @@ struct ParTMFG{
 // #endif  
         return negateGain(ele);
     }
+
 
     // Returns the vertex with max correlation to vertex i that hasn't been inserted yet into the TMFG
     // Returns -1 if there is no such vertex
@@ -434,6 +439,29 @@ struct ParTMFG{
         return *parlay::max_element(make_slice(gainList).cut(0, counter), std::less<heapEle>{});
     }
 
+    // parallelizable
+    inline heapEle getFastMaxGain(triT triangle, size_t depth){
+        auto gainList = sequence<heapEle>::uninitialized(3 * depth);
+        int counter = 0;
+        
+        vtx t1,t2,t3;
+        tie(t1,t2,t3) = triangle;
+        vtx vertices[3] = {t1, t2, t3};
+        for(vtx v : vertices){
+            for(int i = 0; i < depth; i++){
+                if(corr_sorted_list_pointer[v] >= n){
+                    break;
+                }
+                vtx cur_elt = corr_list[v * n + corr_sorted_list_pointer[v]];
+                gainList[counter] = heapEle(computeGain(cur_elt, triangle), cur_elt);
+                counter++;
+                
+            }
+        }
+        return *parlay::max_element(make_slice(gainList).cut(0, counter), std::less<heapEle>{});
+    }
+
+
     // compresses the correlation list to remove some uninserted vertices
     inline void reorganize_vtx(vtx v){
         int valids = 0;
@@ -459,6 +487,8 @@ struct ParTMFG{
         }
     }
 
+
+
     
     // init a heap buffer for triangles[i]
     inline void heapifyFace(face i){
@@ -475,31 +505,42 @@ struct ParTMFG{
             heap_buffer[i*n+v_ind] = heapEle(-1.0*gain, v);
         });*/
         if(use_sorted_list){
-            vector<uint64_t> z = vector<uint64_t>(vertex_num);
+            if(use_highway){
+                vector<uint64_t> z = vector<uint64_t>(vertex_num);
 
-            for(size_t v = 0; v < vertex_num; v++){
-                T gain = -1.0 * computeGain(in[v], t);
-                //corr_heap_buffer[i*n+v] = heapEle(-1.0*gain, v);
-                float fl_gain = (float)(gain+3);
-                uint32_t f_gain;
-                memcpy(&f_gain, &(fl_gain), sizeof(float));
-                //f_gain+=v;
-                z[v] = (((uint64_t)f_gain) << 32) + in[v];
-            }   
-        // parlay::sort_inplace(make_slice(heap_buffer).cut(i*n, i*n+vertex_num));
-        // parlay::internal::seq_sort_inplace(make_slice(heap_buffer).cut(i*n, i*n+vertex_num), std::less<heapEle>{}, false);
-        //parlay::internal::quicksort(make_slice(heap_buffer).cut(i*n, i*n+vertex_num), std::less<heapEle>{});
-        hwy::VQSort(&z[0], vertex_num, hwy::SortAscending());
-        for(vtx v = 0; v < vertex_num; v++){
-            //float d_gain;
-            //uint32_t u_gain = (uint32_t)(z[v] >> 32);
-            //memcpy(&d_sgain, &(u_gain), 4);
-            uint32_t f_gain = (uint32_t)(z[v]>>32);
-            float fl_gain;
-            memcpy(&fl_gain, &(f_gain), sizeof(float));
-            heap_buffer[i*n+v]=heapEle((T)(fl_gain-3), (uint32_t)(z[v]));
-        }
-        sorted_list_pointer[i] = 0;
+                for(size_t v = 0; v < vertex_num; v++){
+                    T gain = -1.0 * computeGain(in[v], t);
+                    //corr_heap_buffer[i*n+v] = heapEle(-1.0*gain, v);
+                    float fl_gain = (float)(gain+3);
+                    uint32_t f_gain;
+                    memcpy(&f_gain, &(fl_gain), sizeof(float));
+                    //f_gain+=v;
+                    z[v] = (((uint64_t)f_gain) << 32) + in[v];
+                }   
+                // parlay::sort_inplace(make_slice(heap_buffer).cut(i*n, i*n+vertex_num));
+                // parlay::internal::seq_sort_inplace(make_slice(heap_buffer).cut(i*n, i*n+vertex_num), std::less<heapEle>{}, false);
+                //parlay::internal::quicksort(make_slice(heap_buffer).cut(i*n, i*n+vertex_num), std::less<heapEle>{});
+                hwy::VQSort(&z[0], vertex_num, hwy::SortAscending());
+                for(vtx v = 0; v < vertex_num; v++){
+                    //float d_gain;
+                    //uint32_t u_gain = (uint32_t)(z[v] >> 32);
+                    //memcpy(&d_sgain, &(u_gain), 4);
+                    uint32_t f_gain = (uint32_t)(z[v]>>32);
+                    float fl_gain;
+                    memcpy(&fl_gain, &(f_gain), sizeof(float));
+                    heap_buffer[i*n+v]=heapEle((T)(fl_gain-3), (uint32_t)(z[v]));
+                }
+            }
+            else{
+                parlay::parallel_for(0, in.size(), [&](size_t v_ind) {
+                    vtx v = in[v_ind];
+                    T gain = computeGain(v, t);
+                    heap_buffer[i*n+v_ind] = heapEle(-1.0*gain, v);
+                });
+                parlay::internal::quicksort(make_slice(heap_buffer).cut(i*n, i*n+vertex_num), std::less<heapEle>{});
+            }
+
+            sorted_list_pointer[i] = 0;
 
        }else{
         heaps[i] = binary_min_heap<heapEle>(heap_buffer.data()+ (i*n), vertex_num, heap_LR.data()+ (i*n));
@@ -529,8 +570,12 @@ struct ParTMFG{
             memcpy(&f_corr, &(fl_corr), sizeof(float));
             z[v] = (((uint64_t)f_corr) << 32) + v;
         }
-        hwy::VQSort(&z[0], n, hwy::SortAscending());
-        //std::sort(&z[0], &z[0] + n);
+        if(use_highway){
+            hwy::VQSort(&z[0], n, hwy::SortAscending());
+        }
+        else{
+            std::sort(&z[0], &z[0] + n);
+        }
 
         corr_sorted_list_pointer[i] = 0;
         for(vtx v = 0; v < n; v++){
