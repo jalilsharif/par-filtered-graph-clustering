@@ -149,6 +149,9 @@ struct DBHTTMFG{
             boost::no_property, boost::property < boost::edge_weight_t, T > > graph_t;
         typedef typename boost::graph_traits < graph_t >::vertex_descriptor vertex_descriptor;
         typedef std::pair<int, int> Edge;
+        typedef vertex_descriptor Vertex;
+        typedef graph_t Graph;
+        typedef typename boost::graph_traits < graph_t >::edge_descriptor Edge2;
 
         // //prepare adj matrix, inlcude zero weight edges
         // const std::size_t num_nodes = n;
@@ -163,6 +166,8 @@ struct DBHTTMFG{
         // graph_t g(edge_array.begin(), edge_array.end(), weights.begin(), num_nodes);
 
         //prepare adj matrix, not inlcude zero weight edges
+        SymM<T> SP2;
+        SymM<T> SPb;
         const std::size_t num_nodes = n;
         std::size_t num_arcs = 3*n-6;
         auto inds = parlay::delayed_seq<bool>(num_arcs, [&](std::size_t i){
@@ -183,16 +188,113 @@ struct DBHTTMFG{
         // cout << "build: " << t1.next() << endl;
 
         // compute to vertex v
-        parlay::parallel_for(0, n, [&](vtx v){
-            std::vector<vertex_descriptor> p(num_vertices(g));
-            std::vector<T> d(num_vertices(g));
-            vertex_descriptor s = vertex(v, g);
-            boost::dijkstra_shortest_paths(g, s, boost::predecessor_map(&p[0]).distance_map(&d[0]));
+        SP2.init(n);
+        //SPb.init(n);
 
+        /*T max_t = 100000000;
+        parlay::parallel_for(0, n, [&](vtx v){
             parlay::parallel_for(v, n, [&](vtx u){
-                SP.update(v, u, d[u]);
+                if(true){
+                    //cout<<u<<' '<<v<<' '<<SP.get(v,u)<<' '<<SPb.get(v, u)<<'\n';
+
+                    SP2.update(v, u, max_t);
+                }
+            });
+        });*/
+        int mod = max(1, (int)(log((double)n)));
+
+        parlay::parallel_for(0, n, [&](vtx v){
+            if(v%mod==0){
+                std::vector<vertex_descriptor> p(num_vertices(g));
+                std::vector<T> d(num_vertices(g));
+                vertex_descriptor s = vertex(v, g);
+                boost::dijkstra_shortest_paths(g, s, boost::predecessor_map(&p[0]).distance_map(&d[0]));
+
+                parlay::parallel_for(0, n, [&](vtx u){
+                    if(!(u%mod==0 && u < v)){
+                        SP.update(v, u, d[u]);
+                        SP2.update(v, u, d[u]);
+
+                    }
+                    
+                });
+            }
+
+        });
+        
+
+        
+
+        class d_visitor : boost::default_bfs_visitor{
+            protected:
+                double hub_distance = -2;
+                const double dist_mult = 5;
+                std::vector<T> *dist_map;
+                int mod;
+            public:
+                int *hub_vtx;
+                d_visitor(std::vector<T> *dist_map_, int mod_, int *hub_vtx_)
+                    : dist_map(dist_map_), mod(mod_), hub_vtx(hub_vtx_) {};
+
+                void initialize_vertex(const Vertex &s, const Graph &g) const {}
+                void discover_vertex(const Vertex &s, const Graph &g) const {}
+                void examine_vertex(const Vertex &s, const Graph &g) const {}
+                void examine_edge(const Edge2 &e, const Graph &g) const {}
+                void edge_relaxed(const Edge2 &e, const Graph &g) const {}
+                void edge_not_relaxed(const Edge2 &e, const Graph &g) const {}
+                void finish_vertex(const Vertex &s, const Graph &g) {
+                    if(boost::get(boost::vertex_index, g)[s] % mod == 0 && hub_distance == -2){
+                        *hub_vtx = boost::get(boost::vertex_index, g)[s];
+                        hub_distance = (*dist_map)[boost::get(boost::vertex_index, g)[s]];
+                        
+                    }
+                    if(hub_distance != -2 && (*dist_map)[boost::get(boost::vertex_index, g)[s]] > dist_mult * hub_distance){
+                        throw(2);
+                    }
+                    
+                }
+        };
+
+        parlay::parallel_for(0, n, [&](vtx v){
+            T max_t = 1000000000;
+            if(v%mod!=0){
+                std::vector<vertex_descriptor> p(num_vertices(g));
+                std::vector<T> d(num_vertices(g), max_t);
+                vertex_descriptor s = vertex(v, g);
+                int idx;
+                d_visitor vis(&d, mod, &idx);
+                try{
+                    boost::dijkstra_shortest_paths(g, s, boost::predecessor_map(&p[0]).distance_map(&d[0]).visitor(vis));
+                }
+                catch(int exception){}
+                parlay::parallel_for(v, n, [&](vtx u){
+                    if(u%mod != 0){
+                        SP.update(v, u, min(d[u], d[idx]+SP.get(idx, u)));
+                    }
+                });
+                parlay::parallel_for(0, v, [&](vtx u){
+                    if(u%mod != 0){
+                        SP2.update(v, u, min(d[u], d[idx]+SP.get(idx, u)));
+
+                    }
+                });
+            }
+
+        });
+        parlay::parallel_for(0, n, [&](vtx v){
+            parlay::parallel_for(v, n, [&](vtx u){
+                if(true){
+                    //cout<<u<<' '<<v<<' '<<SP.get(v,u)<<' '<<SPb.get(v, u)<<'\n';
+
+                    SP.update(v, u, min(SP.get(v, u), SP2.get(v, u)));
+                }
             });
         });
+
+
+
+
+
     }
 
     // inserting v to triangle [v1, v2, v3]
