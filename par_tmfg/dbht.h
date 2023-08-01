@@ -84,9 +84,11 @@ struct DBHTTMFG{
     parlay::sequence<bool> assigned;
     dendroLine* dendro;
 
+    bool exact_apsp;
+
     // cliques should have been inited
-    DBHTTMFG(cliqueT* _cliques, triT* _triangles, std::size_t _n, SymM<T> *_W, tuple<vtx,vtx,T> *_P, SymM<T> *_D, PROF *_profiler):
-    cliques(_cliques), triangles(_triangles), n(_n), W(_W), D(_D), P(_P), pf(_profiler){
+    DBHTTMFG(cliqueT* _cliques, triT* _triangles, std::size_t _n, SymM<T> *_W, tuple<vtx,vtx,T> *_P, SymM<T> *_D, PROF *_profiler, bool _exact_apsp):
+    cliques(_cliques), triangles(_triangles), n(_n), W(_W), D(_D), P(_P), pf(_profiler), exact_apsp(_exact_apsp){
         nb = n-3;
         root = 0;
         t2c = (std::size_t *)malloc(3*_n * sizeof(std::size_t)); //init others?
@@ -188,6 +190,21 @@ struct DBHTTMFG{
         // cout << "build: " << t1.next() << endl;
 
         // compute to vertex v
+        if(exact_apsp){
+            parlay::parallel_for(0, n, [&](vtx v){
+                std::vector<vertex_descriptor> p(num_vertices(g));
+                std::vector<T> d(num_vertices(g));
+                vertex_descriptor s = vertex(v, g);
+                boost::dijkstra_shortest_paths(g, s, boost::predecessor_map(&p[0]).distance_map(&d[0]));
+
+                parlay::parallel_for(v, n, [&](vtx u){
+                        SP.update(v, u, d[u]);                    
+                });
+
+            });
+            return;
+        }
+        timer t; t.start();
         SP2.init(n);
         //SPb.init(n);
 
@@ -221,6 +238,7 @@ struct DBHTTMFG{
             }
 
         });
+        //cout<<t.next()<<'\n';
         
 
         
@@ -233,6 +251,7 @@ struct DBHTTMFG{
                 int mod;
             public:
                 int *hub_vtx;
+                int k = 0;
                 d_visitor(std::vector<T> *dist_map_, int mod_, int *hub_vtx_)
                     : dist_map(dist_map_), mod(mod_), hub_vtx(hub_vtx_) {};
 
@@ -243,12 +262,15 @@ struct DBHTTMFG{
                 void edge_relaxed(const Edge2 &e, const Graph &g) const {}
                 void edge_not_relaxed(const Edge2 &e, const Graph &g) const {}
                 void finish_vertex(const Vertex &s, const Graph &g) {
+                    k++;
                     if(boost::get(boost::vertex_index, g)[s] % mod == 0 && hub_distance == -2){
+
                         *hub_vtx = boost::get(boost::vertex_index, g)[s];
                         hub_distance = (*dist_map)[boost::get(boost::vertex_index, g)[s]];
                         
                     }
                     if(hub_distance != -2 && (*dist_map)[boost::get(boost::vertex_index, g)[s]] > dist_mult * hub_distance){
+                        //cout<<k<<' ';
                         throw(2);
                     }
                     
@@ -275,12 +297,12 @@ struct DBHTTMFG{
                 parlay::parallel_for(0, v, [&](vtx u){
                     if(u%mod != 0){
                         SP2.update(v, u, min(d[u], d[idx]+SP.get(idx, u)));
-
                     }
                 });
             }
 
         });
+        //cout<<t.next()<<'\n';
         parlay::parallel_for(0, n, [&](vtx v){
             parlay::parallel_for(v, n, [&](vtx u){
                 if(true){

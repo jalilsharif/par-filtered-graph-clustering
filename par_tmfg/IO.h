@@ -13,6 +13,8 @@
 namespace IO {
   using namespace std;
 
+  extern ostream *time_output;
+
   template <class T, class Seq>
   SymM<T> parseSymMatrix(Seq W, std::size_t n) {
     SymM<T> matrix = SymM<T>(n);
@@ -27,6 +29,7 @@ namespace IO {
   // read a symmatric matrix from file
   template <class T>
   SymM<T> readSymMatrixFromFile(char const *fname, std::size_t n) {
+    //timer t; t.start();
     parlay::sequence<double> W = parlay::sequence<double>(n*n);
     std::ifstream myFile (fname, ios::in | ios::binary);
     myFile.read((char*)W.data(), sizeof(double) * n*n);
@@ -38,7 +41,10 @@ namespace IO {
       cout << "readPointsFromFile wrong file type or wrong dimension" << endl;
       abort();
     }
-    return parseSymMatrix<T>(W.cut(0,W.size()), n);
+    //cout<<t.next()<<'\n';
+    auto z = parseSymMatrix<T>(W.cut(0,W.size()), n);
+    //cout<<t.next()<<"aaa\n";
+    return z;
   }
 
 }  // namespace IO

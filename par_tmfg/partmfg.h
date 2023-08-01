@@ -36,6 +36,7 @@
 #include "gettime.h"
 #include "atomics.h"
 #include "utilities.h"
+#include "IO.h"
 
 #include "heap.h"
 #include "dbht.h"
@@ -149,8 +150,8 @@ struct ParTMFG{
     inline size_t getTrianglesNum(){return triangles_ind;}
 
     T computeCost(){
-        ofstream outfile;
-        outfile.open("timedata.txt", std::ios_base::app);
+        //ofstream outfile;
+        //outfile.open("timedata.txt", std::ios_base::app);
       // compute the total gain here
         T total_cost = 0;
         for(size_t i=0; i<P_ind; ++ i){
@@ -158,8 +159,8 @@ struct ParTMFG{
             total_cost += get<2>(P[i]);
         }
 
-        outfile << std::setprecision(20) << 2*total_cost << endl;
-        outfile << P_ind << endl; 
+        (*IO::time_output) << std::setprecision(20) << 2*total_cost << endl;
+        (*IO::time_output) << P_ind << endl; 
         return 2*total_cost;   
     }
 
