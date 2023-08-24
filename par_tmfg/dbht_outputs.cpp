@@ -41,3 +41,19 @@ void DBHTTMFG<T, PROF>::outputDendro(string filename, size_t _n){
         }
         file_obj.close();
     } 
+
+template<class T, class PROF> 
+void DBHTTMFG<T, PROF>::outputLabels(string filename, int time){
+        ofstream file_obj;
+        file_obj.open(filename, std::ofstream::out|std::ios_base::app);
+        if (file_obj.fail()) { 
+            cout<<"failed...";
+        }
+        file_obj << time << endl;
+        for(size_t i=0;i<n;i++){
+            file_obj << cluster_labels[i] << ' ';
+        }
+        file_obj << endl;
+        file_obj.close();
+    } 
+

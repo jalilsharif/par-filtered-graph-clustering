@@ -84,6 +84,9 @@ struct DBHTTMFG{
     parlay::sequence<bool> assigned;
     dendroLine* dendro;
 
+    parlay::sequence<int> cluster_labels;
+    parlay::sequence<int> prev_labels;
+
     bool exact_apsp;
 
     // cliques should have been inited
@@ -108,6 +111,7 @@ struct DBHTTMFG{
         map = parlay::sequence<std::size_t>(n);
         flatClustering = parlay::sequence<std::size_t>(n, 0);
         bbMember = parlay::sequence<std::size_t>(n);
+        prev_labels = parlay::sequence<int>(n);
 
         initDegrees();
     }
@@ -270,7 +274,6 @@ struct DBHTTMFG{
                         
                     }
                     if(hub_distance != -2 && (*dist_map)[boost::get(boost::vertex_index, g)[s]] > dist_mult * hub_distance){
-                        //cout<<k<<' ';
                         throw(2);
                     }
                     
@@ -312,6 +315,7 @@ struct DBHTTMFG{
                 }
             });
         });
+
 
 
 
@@ -367,7 +371,7 @@ struct DBHTTMFG{
     // prereq: id1 and id2 are parent-child relationship
     //          so three of the elements are the same, and one is different
     // the same ones are at the beginning and the different one (from id1) is in the end
-    cliqueT compareCliques(std::size_t id1, std::size_t id2);
+    cliqueT sortClique(std::size_t id1, std::size_t id2);
 
 
 
@@ -430,6 +434,21 @@ struct DBHTTMFG{
     void outputDefaultClustering(string filename, size_t _n=0);
     void outputBubbleAssign(string filename, size_t _n=0);
     void outputDendro(string filename, size_t _n=0);
+    void outputLabels(string filename, int time);
+
+
+    /////////////// labeling /////////////////////
+
+    bool compareHeightsReverse(dendroLine d1, dendroLine d2){
+        return d1.height > d2.height;
+    }
+
+    dendroLine getDendroNode(int idx){
+        return dendro[idx-n];
+    }
+
+    void clusterLabels(int num_clusters);
+    void relabel(int num_clusters);
 
 #ifdef DEBUG
     void checkDegree(){

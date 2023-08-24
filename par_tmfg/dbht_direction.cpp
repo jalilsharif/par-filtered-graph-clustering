@@ -18,7 +18,7 @@ template<class T, class PROF>
 typename DBHTTMFG<T, PROF>::partialDeg DBHTTMFG<T, PROF>::computeDirectionHelper(std::size_t id, std::size_t pid){
         partialDeg result;
 
-        vtx t1,t2,t3,v; tie(t1,t2,t3,v) = compareCliques(id, pid);
+        vtx t1,t2,t3,v; tie(t1,t2,t3,v) = sortClique(id, pid);
         result.inds[0] = t1; result.inds[1] = t2; result.inds[2] = t3;
         result.vals[0] += getW(t1, v);
         result.vals[1] += getW(t2, v);
@@ -36,7 +36,7 @@ typename DBHTTMFG<T, PROF>::partialDeg DBHTTMFG<T, PROF>::computeDirectionHelper
             T tri_val = getW(t1, t2) + getW(t1, t3) + getW(t2, t3);
             T in_val = result.vals[0] + result.vals[1] + result.vals[2]; 
             T out_val = degrees[t1] +  degrees[t2] +  degrees[t3] - in_val - 2*tri_val;
-            if(in_val > out_val){ // goinig from parent to this bubble
+            if(in_val > out_val){ // going from parent to this bubble
                 directions[id] = false;
                 std::size_t pid = tree[id].parent;
                 if(converging[pid]) converging[pid] = false;
@@ -50,7 +50,7 @@ typename DBHTTMFG<T, PROF>::partialDeg DBHTTMFG<T, PROF>::computeDirectionHelper
     }
 
 template<class T, class PROF> 
-cliqueT DBHTTMFG<T, PROF>::compareCliques(std::size_t id1, std::size_t id2){
+cliqueT DBHTTMFG<T, PROF>::sortClique(std::size_t id1, std::size_t id2){
         vtx inds3[4];
         int ct = 0;
 #ifdef DEBUG

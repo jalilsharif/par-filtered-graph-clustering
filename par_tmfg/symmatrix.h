@@ -1,13 +1,19 @@
 #pragma once
 
+#include "parlay/primitives.h"
+#include "parlay/sequence.h"
+
 using namespace std;
+
+using parlay::sequence;
 
 // symmetric matrix, diagonal is all diag_val = 0 by default
 template<class T> 
 struct SymM{
 
     std::size_t n = 0;
-    T* distmat = nullptr;
+    //T* distmat = nullptr;
+    sequence<T> distmat;
     std::size_t distmat_size = 0;
     T diag_val = 0;
 
@@ -16,13 +22,15 @@ struct SymM{
         n = _n;
         diag_val = _diag_val;
         distmat_size = n*(n-1)/2;
-        distmat = (T *)malloc(distmat_size * sizeof(T));
+        //distmat = (T *)malloc(distmat_size * sizeof(T));
+        distmat = sequence<T>::uninitialized(distmat_size);
     }
 
     void init(std::size_t _n){
         n = _n;
         distmat_size = n*(n-1)/2;
-        distmat = (T *)malloc(distmat_size * sizeof(T));
+        //distmat = (T *)malloc(distmat_size * sizeof(T));
+        distmat = sequence<T>::uninitialized(distmat_size);
     }
 
     inline long getInd(std::size_t i, std::size_t j){
@@ -48,9 +56,6 @@ struct SymM{
         distmat[getInd(r_, c_)] = dist;
     }
 
-    ~SymM(){
-        free(distmat);
-    }
     void printMatrix(){
     // for (std::size_t i=0; i<distmat_size; i++){
     //     cout << distmat[i] << endl;
