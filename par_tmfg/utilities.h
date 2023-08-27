@@ -11,8 +11,8 @@ using namespace std;
 
 
 
-using vtx=int;
-using face=int;
+using vtx=unsigned int;
+using face=unsigned int;
 using cliqueT=tuple<vtx,vtx,vtx,vtx>;
 using triT=tuple<vtx,vtx,vtx>;
 
