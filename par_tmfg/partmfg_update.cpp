@@ -174,7 +174,7 @@ void ParTMFG<T, PROF>::updateVerticesHeap(vtx v, face tri){
     for(size_t ii = 0; ii < vtx_to_face_inds[v]; ii++){
         face i = face_store[ii+max_face_num*v];
         invalid_flag[i] = true;
-        if(i == tri || i >= triangles_ind -2 ){
+        if(i == tri || i >= triangles_ind - 2 ){
             triT new_tri = triangles[i];
             heapEle result = getApproxMaxGain(new_tri, depth);
             vtx new_v = result.second;
@@ -226,7 +226,7 @@ template<class T, class PROF>
 void ParTMFG<T, PROF>::updateVerticesOld(vtx v, face tri){
     parlay::parallel_for(0, vtx_to_face_inds[v], [&](size_t ii) {
             face i = face_store[ii+max_face_num*v];
-            if(i == tri || i >= triangles_ind -2 ){heapifyFace(i);}
+            if(i == tri || i >= triangles_ind - 2 ){heapifyFace(i);}
 
             heapEle result = getMinValidHeapEle(i);
             vtx new_v = result.second;

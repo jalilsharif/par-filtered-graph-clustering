@@ -39,8 +39,10 @@ double fast_timeseries_list<T>::compute_corr(int i, int j){
     std::cout<<(window_size * sum_prods[i*num_series+j])<<"?\n";
     std::cout<<sqrt_i<<"?\n";
     std::cout<<sqrt_j<<"?\n";*/
-    if((double) (window_size * series[j].sliding_square_sum - series[j].sliding_sum * series[j].sliding_sum)<=0){
-        cout<<"failure :("<<min_idx<<' '<<j;
+    if((double) (window_size * series[j].sliding_square_sum - series[j].sliding_sum * series[j].sliding_sum)<=0
+    || (double) (window_size * series[i].sliding_square_sum - series[i].sliding_sum * series[i].sliding_sum)<=0){
+        return 0;
+        //cout<<"failure :("<<min_idx<<' '<<j;
     }
     return numerator / (sqrt_i * sqrt_j);
 }

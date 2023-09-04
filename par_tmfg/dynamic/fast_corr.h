@@ -1,5 +1,7 @@
 #pragma once
 #include <iostream>
+#include <random>
+#include <cmath>
 
 #include "parlay/parallel.h"
 #include "parlay/primitives.h"
@@ -53,12 +55,15 @@ struct fast_timeseries_list{
     int window_size;
     int min_idx;
     SymM<T> corr_matrix;
+    std::mt19937 gen;
     
 
     fast_timeseries_list(){}
 
     fast_timeseries_list(T* raw_series, int _num_series, int _len, int _window_size, int start):
     num_series(_num_series), len(_len), window_size(_window_size), min_idx(start){
+        std::random_device rd;  
+        gen = std::mt19937(rd()); 
         series = sequence<fast_timeseries<T>>::uninitialized(num_series);
 
         for(int i = 0; i < num_series; i++){
@@ -67,7 +72,7 @@ struct fast_timeseries_list{
             //corr_matrix[i] = (double*) malloc(num_series * sizeof(double));
         }
 
-        std::cout<<'\n';
+
 
     }
 
@@ -92,7 +97,25 @@ struct fast_timeseries_list{
 
     void advance();
 
+    double get_prev_corr(int i, int j){
+        return corr_matrix.get(i, j);
+    }
 
+    double top_corr_pct_change(int samples, int top){
+        sequence<double> changes = sequence<double>::uninitialized(samples);
+        std::uniform_int_distribution<> rand_series(0, num_series - 1);
+        for(int sample=0; sample<samples; sample++){
+            int i = rand_series(gen);
+            int j = rand_series(gen);
+            double prev_corr = get_prev_corr(i, j);
+            double cur_corr = compute_corr(i, j);
+            double change = abs(prev_corr - cur_corr);
+            changes[sample] = change;
+        }
+        parlay::internal::quicksort(make_slice(changes), std::less<double>{});
+        return changes[samples-top];
+
+    }
 
     double compute_corr(int i, int j);
 

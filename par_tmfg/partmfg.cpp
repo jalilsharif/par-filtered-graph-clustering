@@ -169,11 +169,12 @@ void ParTMFG<T, PROF>::updateGainArrayHeap(sequence<size_t> &insert_list){
                 return get<2>(i) < get<2>(j); // sort by face indices to get the corresponding orders again, sort only the before the insert part
             });
         if(use_corrs){
+            // get vertex indices to update
             auto indices = sequence<size_t>::uninitialized(v_list.size());
             for(unsigned long int i = 0; i < v_list.size(); i++){
                 indices[i] = vtx_to_face_inds[v_list[i].first];
             }
-            
+            // remove duplicate vertices
             size_t max_idx = *parlay::max_element(indices, std::less<size_t>{});
             auto update_set = parlay::hashtable(3 * max_idx * v_list.size(), parlay::hash_numeric<T>());
             parlay::parallel_for(0, (size_t)v_list.size(), [&](size_t j) {
@@ -189,11 +190,13 @@ void ParTMFG<T, PROF>::updateGainArrayHeap(sequence<size_t> &insert_list){
 
                 }
             });
+            // update vertices
             sequence<T> vertices = update_set.entries();
             parlay::parallel_for(0, vertices.size(), [&](size_t vt) {
                 getMaxCorr(vertices[vt]);
                 corr_sorted_list_pointer[vertices[vt]]--;
             });
+            // update faces
             parlay::parallel_for(0, (size_t)v_list.size(), [&](size_t j) {
                 vtx v = v_list[j].first;
                 for(size_t ii = 0; ii < vtx_to_face_inds[v]; ii++) {
@@ -229,7 +232,7 @@ void ParTMFG<T, PROF>::updateGainArrayHeap(sequence<size_t> &insert_list){
 template<class T, class PROF> 
 void ParTMFG<T, PROF>::insertMultiple(sequence<size_t> &insert_list, DBHTTMFG<T, PROF> *clusterer){
         // for each vertex, triangle pair in the insert_list, insert the vertex 
-        // and update triangle list, vertex_flag,  and P
+        // and update triangle list, vertex_flag, and P
         parlay::parallel_for(0, insert_list.size(), [&](size_t i) {
             auto entry = max_clique_gains[insert_list[i]];
             vtx v = get<0>(entry);
@@ -304,8 +307,9 @@ void ParTMFG<T, PROF>::insertOne(DBHTTMFG<T, PROF> *clusterer){ // = nullptr
 
     updateInternal(v, tri, clusterer);
     removeOneV(v); 
-    if(vertex_num == 0) return;
-
+    if(vertex_num == 0){
+        return;
+    }
     
     if(use_max_gains_heap){
         updateVerticesHeap(v, tri);

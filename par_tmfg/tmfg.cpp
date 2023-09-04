@@ -28,7 +28,7 @@ void runDBHT(SymM<double> *W, SymM<double> *D, size_t n, size_t THRESHOLD, strin
     timer t;t.start();
     computer.init();   
     computer.initGainArray();                 pf.setInitTime(t2.next());
-    auto clusterer = new ParDBHTTMFGD(computer.cliques.data(), computer.triangles.data(), n, computer.W, computer.P.data(), D, &pf, exact_apsp);
+    auto clusterer = ParDBHTTMFGD(computer.cliques.data(), computer.triangles.data(), n, computer.W, computer.P.data(), D, &pf, exact_apsp);
     int round=0;
     (*IO::time_output) << "init total: "<< t.next() << endl;
 
@@ -36,7 +36,7 @@ void runDBHT(SymM<double> *W, SymM<double> *D, size_t n, size_t THRESHOLD, strin
         while(computer.hasUninsertedV()){
                 size_t round_THRESHOLD = min(THRESHOLD, computer.getTrianglesNum());
                 auto insert_list = computer.getBestVertices(round_THRESHOLD);   pf.incVTime(t2.next());
-                computer.insertMultiple(insert_list, clusterer);                 pf.incInsertTime(t2.next());
+                computer.insertMultiple(insert_list, &clusterer);               pf.incInsertTime(t2.next());
                 computer.updateGainArray(insert_list);                          pf.incUpdTime(t2.next());
     #ifdef DEBUG
             computer.checkTriangles();
@@ -45,13 +45,13 @@ void runDBHT(SymM<double> *W, SymM<double> *D, size_t n, size_t THRESHOLD, strin
         } //while end
     }else if(method == "exact"){ //use exact
         while(computer.hasUninsertedV()){
-            computer.insertOne(clusterer);
+            computer.insertOne(&clusterer);
             round++;
         } //while end
     }else if(method == "naive"){ //naive method
         while(computer.hasUninsertedV()){
             auto insert_list = computer.getAllBestVertices(computer.getTrianglesNum()); pf.incVTime(t2.next());
-            computer.insertMultiple(insert_list, clusterer);                             pf.incInsertTime(t2.next());
+            computer.insertMultiple(insert_list, &clusterer);                           pf.incInsertTime(t2.next());
             computer.initGainArray();                                                   pf.incUpdTime(t2.next());
             round++;
         } //while end
@@ -62,27 +62,27 @@ void runDBHT(SymM<double> *W, SymM<double> *D, size_t n, size_t THRESHOLD, strin
     computer.computeCost();
     pf.report();
     t.next();
-    clusterer->APSP();
+    clusterer.APSP();
     (*IO::time_output) << "APSP total: "<< t.next() << endl;
-    clusterer->computeDirection();
+    clusterer.computeDirection();
     (*IO::time_output) << "direction total: "<< t.next() << endl;
-    clusterer->nonDiscreteClustering();
+    clusterer.nonDiscreteClustering();
     (*IO::time_output) << "non-discrete total: "<< t.next() << endl;
-    clusterer->assignToConvergingBubble(); // need to test
+    clusterer.assignToConvergingBubble(); // need to test
     (*IO::time_output) << "discrete total: "<< t.next() << endl;
-    (*IO::time_output) << "num cluster: "<< clusterer->nc << endl;
-    clusterer->assignToBubble(); // need to test
+    (*IO::time_output) << "num cluster: "<< clusterer.nc << endl;
+    clusterer.assignToBubble(); // need to test
     (*IO::time_output) << "bubble total: "<< t.next() << endl;
-    clusterer->buildHierarchy();
+    clusterer.buildHierarchy();
     (*IO::time_output) << "hierarchy total: "<< t.next() << endl;
 
 
     if(method == "exact" || method == "naive"){
         computer.outputP("./outputs/Ps/" + dsname + "-" + method + "-P-1");
-        clusterer->outputDendro("./outputs/Zs/" + dsname + "-" + method + "-Z-1" );
+        clusterer.outputDendro("./outputs/Zs/" + dsname + "-" + method + "-Z-1" );
     }else{
         computer.outputP("./outputs/Ps/" + dsname + "-" + method + "-P-" + to_string(THRESHOLD) );
-        clusterer->outputDendro("./outputs/Zs/" + dsname + "-" + method + "-Z-" + to_string(THRESHOLD));
+        clusterer.outputDendro("./outputs/Zs/" + dsname + "-" + method + "-Z-" + to_string(THRESHOLD));
     }
     (*IO::time_output) << endl;
     cout << "done" << endl;

@@ -32,6 +32,9 @@ struct dynamic_TMFG{
 
     int recluster_ct = 0;
 
+    string label_file;
+    string ari_file;
+
     dynamic_TMFG(unsigned int n_, unsigned int len_, int window_, bool two_files, string fname1_, string fname2_, string fname_): 
         n(n_), len(len_), window(window_), fname1(fname1_), fname2(fname2_), fname(fname_){
         raw_data = sequence<T>::uninitialized(n*len);

@@ -1,12 +1,12 @@
 #include "tmfg_dynamic.hpp"
 #include "dynamic_io.cpp"
+#include "ari_score.hpp"
 
 #include "../partmfg_double.h"
 #include "../profiler.h"
 #include "../IO.h"
 
 #include <getopt.h>
-
 
 
 ostream* IO::time_output = &cout;
@@ -29,7 +29,7 @@ sequence<int> dynamic_TMFG<T>::runDBHT(SymM<double> *W, SymM<double> *D, size_t 
     timer t;t.start();
     computer.init();   
     computer.initGainArray();                 pf.setInitTime(t2.next());
-    auto clusterer = new ParDBHTTMFGD(computer.cliques.data(), computer.triangles.data(), n, computer.W, computer.P.data(), D, &pf, exact_apsp);
+    auto clusterer = ParDBHTTMFGD(computer.cliques.data(), computer.triangles.data(), n, computer.W, computer.P.data(), D, &pf, exact_apsp);
     int round=0;
     if(verbose){
         (*IO::time_output) << "init total: "<< t.next() << endl;
@@ -39,7 +39,7 @@ sequence<int> dynamic_TMFG<T>::runDBHT(SymM<double> *W, SymM<double> *D, size_t 
         while(computer.hasUninsertedV()){
                 size_t round_THRESHOLD = min(THRESHOLD, computer.getTrianglesNum());
                 auto insert_list = computer.getBestVertices(round_THRESHOLD);   pf.incVTime(t2.next());
-                computer.insertMultiple(insert_list, clusterer);                 pf.incInsertTime(t2.next());
+                computer.insertMultiple(insert_list, &clusterer);               pf.incInsertTime(t2.next());
                 computer.updateGainArray(insert_list);                          pf.incUpdTime(t2.next());
     #ifdef DEBUG
             computer.checkTriangles();
@@ -48,13 +48,13 @@ sequence<int> dynamic_TMFG<T>::runDBHT(SymM<double> *W, SymM<double> *D, size_t 
         } //while end
     }else if(method == "exact"){ //use exact
         while(computer.hasUninsertedV()){
-            computer.insertOne(clusterer);
+            computer.insertOne(&clusterer);
             round++;
         } //while end
     }else if(method == "naive"){ //naive method
         while(computer.hasUninsertedV()){
             auto insert_list = computer.getAllBestVertices(computer.getTrianglesNum()); pf.incVTime(t2.next());
-            computer.insertMultiple(insert_list, clusterer);                             pf.incInsertTime(t2.next());
+            computer.insertMultiple(insert_list, &clusterer);                           pf.incInsertTime(t2.next());
             computer.initGainArray();                                                   pf.incUpdTime(t2.next());
             round++;
         } //while end
@@ -67,28 +67,28 @@ sequence<int> dynamic_TMFG<T>::runDBHT(SymM<double> *W, SymM<double> *D, size_t 
     }
     pf.report();
     t.next();
-    clusterer->APSP();
+    clusterer.APSP();
     if(verbose){
         (*IO::time_output) << "APSP total: "<< t.next() << endl;
     }
-    clusterer->computeDirection();
+    clusterer.computeDirection();
     if(verbose){
         (*IO::time_output) << "direction total: "<< t.next() << endl;
     }
-    clusterer->nonDiscreteClustering();
+    clusterer.nonDiscreteClustering();
     if(verbose){
         (*IO::time_output) << "non-discrete total: "<< t.next() << endl;
     }
-    clusterer->assignToConvergingBubble(); // need to test
+    clusterer.assignToConvergingBubble(); // need to test
     if(verbose){
         (*IO::time_output) << "discrete total: "<< t.next() << endl;
-        (*IO::time_output) << "num cluster: "<< clusterer->nc << endl;
+        (*IO::time_output) << "num cluster: "<< clusterer.nc << endl;
     }
-    clusterer->assignToBubble(); // need to test
+    clusterer.assignToBubble(); // need to test
     if(verbose){
         (*IO::time_output) << "bubble total: "<< t.next() << endl;
     }
-    clusterer->buildHierarchy();
+    clusterer.buildHierarchy();
     if(verbose){
         (*IO::time_output) << "hierarchy total: "<< t.next() << endl;
     }
@@ -96,28 +96,39 @@ sequence<int> dynamic_TMFG<T>::runDBHT(SymM<double> *W, SymM<double> *D, size_t 
     if(verbose){
         if(method == "exact" || method == "naive"){
             computer.outputP("outputs/Ps/" + dsname + "-" + method + "-P-1");
-            clusterer->outputDendro("outputs/Zs/" + dsname + "-" + method + "-Z-1"  );
+            clusterer.outputDendro("outputs/Zs/" + dsname + "-" + method + "-Z-1"  );
         }else{
             computer.outputP("outputs/Ps/" + dsname + "-" + method + "-P-" + to_string(THRESHOLD) );
-            clusterer->outputDendro("outputs/Zs/" + dsname + "-" + method + "-Z-" + to_string(THRESHOLD));
+            clusterer.outputDendro("outputs/Zs/" + dsname + "-" + method + "-Z-" + to_string(THRESHOLD));
         }
     }
 
 
     if(relabel){
         for(int i=0;i<n;i++){
-                clusterer->prev_labels[i]=prev_labels[i];
+                clusterer.prev_labels[i]=prev_labels[i];
         }
     }
-    clusterer->clusterLabels(num_clusters);
+
+    clusterer.clusterLabels(num_clusters);
+    cout << "compare score:" << ari_score<int>(prev_labels, clusterer.cluster_labels, num_clusters)<<'\n';
+
     if(relabel){
-        clusterer->relabel(num_clusters);
+        clusterer.relabel(num_clusters);
     }
-    clusterer->outputLabels("dynamic/dynout.txt",time);
+    int x=0;
+    for(int i=0;i<n; i++){
+        if(clusterer.cluster_labels[i]==prev_labels[i]){
+            x++;
+        }
+    }
+    cout<<x<<'\n';
+    clusterer.outputLabels(label_file, time);
     
     //(*IO::time_output) << endl;
-    
-    return clusterer->cluster_labels;
+    sequence<int> labels = clusterer.cluster_labels;
+
+    return labels;
 
 }
 
@@ -125,10 +136,14 @@ sequence<int> dynamic_TMFG<T>::runDBHT(SymM<double> *W, SymM<double> *D, size_t 
 template <class T>
 void dynamic_TMFG<T>::tick(bool start, bool stop, int i, int clusters, bool verbose, string method, int THRESHOLD, bool use_corrs, bool use_gains_heap, bool use_highway, bool exact_apsp, string dsname)
 {
-    corrs.update_corr_matrix();
+    //cout << i<<' '<<corrs.top_corr_pct_change(100, 10)<<' '<<corrs.top_corr_pct_change(100, 50)<<'\n';
+    if(true||i%30==5){
+        corrs.update_corr_matrix();
+    }
+    
     //string dsname = "ECG5000";
     //string method = "exact";
-    
+
     if(true){ // replace with better heuristic
         cout << "Running DBHT at time " << i <<'\n';
         prev_labels=runDBHT(&(corrs.corr_matrix), nullptr, n, 0, method, use_corrs, use_gains_heap, use_highway, exact_apsp, clusters, i, !start, prev_labels, verbose, dsname);
@@ -142,6 +157,7 @@ void dynamic_TMFG<T>::tick(bool start, bool stop, int i, int clusters, bool verb
     if(verbose){
         cout<<"tick\n";
     }
+    cout << "ari score:" << ari_score<int>(prev_labels, true_labels, clusters)<<'\n';
 }
 
 
@@ -149,14 +165,15 @@ int main(int argc, char *argv[]) {
     bool twofiles = false;
     string file1 = "../../../../../large_files/UCRArchive_2018/ECG5000/ECG5000_TEST.tsv";
     string file2 = "../../../../../large_files/UCRArchive_2018/ECG5000/ECG5000_TRAIN.tsv";
-    string fname = "ecg.tsv";
-    int window_size = 10;
-    int series_len = 140;
-    string labels = "dynamic/dynout.txt";
-    int clusters = 5;
+    string fname = "ecg.tsv";//"../../../../../large_files/stocks.tsv";//"ecg.tsv";
+    int window_size = 30;
+    int series_len = 140;//1761;//140;
+    string label_file = "dynamic/predicted_labels.txt";
+    string ari_file = "dynamic/ari_outputs.txt";
+    int clusters = 5;//11;//5;
     bool verbose = false; // whether to output everything or just labels
     string dsname = "ECG5000"; // path to dendrogram output directory
-    size_t n = 5000;
+    size_t n = 5000;//1615;//5000;
     string method = "exact";
     size_t THRESHOLD = 0;
     int round = 1;
@@ -257,7 +274,7 @@ int main(int argc, char *argv[]) {
             series_len = atoi(optarg);
             break;
         case 'l':
-            labels = optarg;
+            label_file = optarg;
             break;
         case 'c':
             clusters = atoi(optarg);
@@ -272,13 +289,17 @@ int main(int argc, char *argv[]) {
 
 
     std::ofstream clearer;
-    clearer.open(labels, std::ofstream::out | std::ofstream::trunc);
+    clearer.open(label_file, std::ofstream::out | std::ofstream::trunc);
+    clearer.close();
+
+    clearer.open(ari_file, std::ofstream::out | std::ofstream::trunc);
     clearer.close();
     //int num_points = 140;
     //int window = 10;
 
     dynamic_TMFG<double> d = dynamic_TMFG<double>(n, series_len, window_size, twofiles, file1, file2, fname);
-
+    d.label_file = label_file;
+    d.ari_file = ari_file;
     
     for(int time=window_size-1; time<series_len; time++){
         bool start = (time==window_size-1);
