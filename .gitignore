@@ -56,3 +56,7 @@ par_tmfg/*.py
 
 */cloud.key
 */cloud.key.pub
+
+par_tmfg/testing/*
+
+
