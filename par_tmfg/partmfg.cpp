@@ -62,7 +62,7 @@ void ParTMFG<T, PROF>::heapifyVtx(vtx i){
     }
     if(use_highway){
         #ifdef HIGHWAY_MAKE
-        hwy::VQSort(&z[0], vertex_num, hwy::SortAscending());
+        hwy::VQSort(&z[0], n, hwy::SortAscending());
         #else
         std::sort(&z[0], &z[0]+n);
         #endif
@@ -388,6 +388,8 @@ void ParTMFG<T, PROF>::initGainArrayHeap(){
     vtx_heap = vector<gainT>();
     for(face i = 0; i < triangles_ind; i++) {
         heapifyFace(i);
+        triT t = triangles[i];
+        // issue: heapifyFace (only necessary when use_max_gains_heap is false) does not work properly with highway
         heapEle result = getMinValidHeapEle(i);
         vtx v = result.second;
         max_clique_gains[i] = make_tuple(v, result.first, i);

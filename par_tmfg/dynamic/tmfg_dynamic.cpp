@@ -146,7 +146,7 @@ void dynamic_TMFG<T>::tick(bool start, bool stop, int i, int clusters, bool verb
 
     if(true){ // replace with better heuristic
         cout << "Running DBHT at time " << i <<'\n';
-        prev_labels=runDBHT(&(corrs.corr_matrix), nullptr, n, 0, method, use_corrs, use_gains_heap, use_highway, exact_apsp, clusters, i, !start, prev_labels, verbose, dsname);
+        prev_labels=runDBHT(&(corrs.corr_matrix), nullptr, n, 0, method, use_corrs, use_gains_heap, use_highway, exact_apsp, clusters, i, !start, prev_labels, verbose, true, dsname);
         cout << "done\n";
         recluster_ct++;
     }

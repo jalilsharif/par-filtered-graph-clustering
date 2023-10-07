@@ -11,7 +11,7 @@
 
 ostream* IO::time_output = &cout;
 
-void runDBHT(SymM<double> *W, SymM<double> *D, size_t n, size_t THRESHOLD, string method, bool use_corrs, bool use_gains_heap, bool use_highway, bool exact_apsp, string dsname = ""){//, bool use_gains_heap = false){
+void runDBHT(SymM<double> *W, SymM<double> *D, size_t n, size_t THRESHOLD, string method, bool use_corrs, bool use_gains_heap, bool use_highway, bool exact_apsp, bool manual_avx, string dsname = ""){//, bool use_gains_heap = false){
     //ofstream outfile;
     //outfile.open("timedata.txt", std::ios_base::app);
 
@@ -24,7 +24,7 @@ void runDBHT(SymM<double> *W, SymM<double> *D, size_t n, size_t THRESHOLD, strin
         auto pf = DummyProfiler();
     #endif
     timer t2;t2.start();
-    ParTMFGD computer = ParTMFGD(W, n, &pf, use_corrs, use_gains_heap, use_highway); 
+    ParTMFGD computer = ParTMFGD(W, n, &pf, use_corrs, use_gains_heap, use_highway, manual_avx); 
     timer t;t.start();
     computer.init();   
     computer.initGainArray();                 pf.setInitTime(t2.next());
@@ -110,6 +110,7 @@ bool use_gains_heap = true; // whether to use a heap for TMFG construction, only
 bool use_corrs = true; // whether to use the new TMFG construction method
 bool use_highway = false; // whether to use highway for sorting
 bool exact_apsp = false; // whether to use exact or approximate APSP
+bool manual_avx = true; // whether to attempt manual vectorization if available
 
 
 
@@ -130,9 +131,10 @@ ofstream outfile2;
             {"orig-tmfg", no_argument, 0, 'O'},
             {"use-highway", no_argument, 0, 'W'},
             {"exact-apsp", no_argument, 0, 'A'},
+            {"no-manual-vectorize", no_argument, 0, 'M'},
             {0, 0, 0, 0}};
 
-        opt = getopt_long(argc, argv, "f:o:n:hd:t:p:r:NOWA", long_options, NULL);
+        opt = getopt_long(argc, argv, "f:o:n:hd:t:p:r:NOWAM", long_options, NULL);
         if (opt == -1)
             break;
 
@@ -172,6 +174,9 @@ ofstream outfile2;
             break;
         case 'A':
             exact_apsp = true;
+            break;
+        case 'M':
+            manual_avx = false;
             break;
         case 'h':
             cout << "usage:\n";
@@ -217,11 +222,10 @@ for(int r=0;r<round;++r){
     if(dist_file){
         SymM<double> D = IO::readSymMatrixFromFile<double>(distance_filename, n);
         (*IO::time_output) << "read: " << t2.next() << endl;
-        runDBHT(&W, &D, n, THRESHOLD, method, use_corrs, use_gains_heap, use_highway, exact_apsp, dsname);
-        D.free_matrix();
+        runDBHT(&W, &D, n, THRESHOLD, method, use_corrs, use_gains_heap, use_highway, exact_apsp, manual_avx, dsname);
     }else{
         (*IO::time_output) << "read: " << t2.next() << endl;
-        runDBHT(&W, nullptr, n, THRESHOLD, method, use_corrs, use_gains_heap, use_highway, exact_apsp, dsname);
+        runDBHT(&W, nullptr, n, THRESHOLD, method, use_corrs, use_gains_heap, use_highway, exact_apsp, manual_avx, dsname);
     }
 }
 

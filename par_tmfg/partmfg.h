@@ -65,8 +65,8 @@ struct ParTMFG{
 
     PROF *pf;
 
-    ParTMFG(SymM<T> *W_, size_t n_, PROF *_profiler, bool _use_corrs, bool _use_gains_heap, bool _use_highway):
-    W(W_), n(n_), pf(_profiler), use_corrs(_use_corrs), use_max_gains_heap(_use_gains_heap), use_highway(_use_highway){
+    ParTMFG(SymM<T> *W_, size_t n_, PROF *_profiler, bool _use_corrs, bool _use_gains_heap, bool _use_highway, bool _manual_avx):
+    W(W_), n(n_), pf(_profiler), use_corrs(_use_corrs), use_max_gains_heap(_use_gains_heap), use_highway(_use_highway), manual_avx(_manual_avx){
     }
 
     struct heap_compare{
@@ -251,6 +251,8 @@ struct ParTMFG{
     bool use_max_gains_heap;
     bool use_highway;
 
+    bool manual_avx;
+
 
     sequence<float> max_gains_array;
 
@@ -278,6 +280,7 @@ struct ParTMFG{
     }
 
 
+    vtx getMaxCorrVec(vtx i);
     vtx getMaxCorr(vtx i);
 
 

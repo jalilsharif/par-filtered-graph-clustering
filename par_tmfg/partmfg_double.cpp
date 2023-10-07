@@ -9,7 +9,6 @@
 #include "dbht_label.cpp"
 
 
-
 #ifdef PROFILE
 template struct ParTMFG<double, Profiler>;
 template struct DBHTTMFG<double, Profiler>;

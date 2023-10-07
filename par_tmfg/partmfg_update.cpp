@@ -14,7 +14,7 @@
 // Has support for AVX512/AVX2
 #ifdef __AVX512F__
 template<class T, class PROF>
-vtx ParTMFG<T, PROF>::getMaxCorr(vtx i){
+vtx ParTMFG<T, PROF>::getMaxCorrVec(vtx i){
     vtx ele;
     size_t ind = 0;
     ind = corr_sorted_list_pointer[i];
@@ -53,7 +53,7 @@ vtx ParTMFG<T, PROF>::getMaxCorr(vtx i){
 }
 #elif defined(__AVX2__)
 template<class T, class PROF>
-vtx ParTMFG<T, PROF>::getMaxCorr(vtx i){
+vtx ParTMFG<T, PROF>::getMaxCorrVec(vtx i){
     vtx ele;
     size_t ind = 0;
     ind = corr_sorted_list_pointer[i];
@@ -94,7 +94,7 @@ vtx ParTMFG<T, PROF>::getMaxCorr(vtx i){
 }
 #else
 template<class T, class PROF>
-vtx ParTMFG<T, PROF>::getMaxCorr(vtx i){
+vtx ParTMFG<T, PROF>::getMaxCorrVec(vtx i){
     vtx ele;
     size_t ind = 0;
     do {
@@ -110,6 +110,26 @@ vtx ParTMFG<T, PROF>::getMaxCorr(vtx i){
     return ele;
 }
 #endif // AVX
+
+template<class T, class PROF>
+vtx ParTMFG<T, PROF>::getMaxCorr(vtx i){
+    if(manual_avx){
+        return getMaxCorrVec(i);
+    }
+    vtx ele;
+    size_t ind = 0;
+    do {
+        ind = corr_sorted_list_pointer[i];
+        corr_sorted_list_pointer[i]++;
+        ele = corr_list[i*n+ind];
+
+    }
+    while ( !vertex_flag[ele] && ind < n);
+    if(ind == n && !vertex_flag[ele]){
+        return n+1;
+    }
+    return ele;
+}
 
 
 template<class T, class PROF>

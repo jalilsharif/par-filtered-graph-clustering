@@ -42,5 +42,10 @@ openstack: CCFLAGS = -O3 -Wall  -std=c++17 -mcx16 -mavx2 -flto -march=broadwell
 
 openstack: tmfg
 
+openstack: CCFLAGS = -O3 -Wall  -std=c++17 -mcx16 -mavx2 -flto -march=skylake
+
+
+ec2: tmfg
+
 clean:
 	rm -rf tmfg faster *.o
