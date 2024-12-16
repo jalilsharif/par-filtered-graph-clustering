@@ -59,4 +59,9 @@ par_tmfg/*.py
 
 par_tmfg/testing/*
 
-
+par_tmfg/symmetrical_matrix_ijc_EC_pearson_dissimilarity.bin
+par_tmfg/symmetrical_matrix_ijc_EC_pearson.bin
+par_tmfg/timing.txt
+par_tmfg/ijw_EC_filtered_pearson.txt
+par_tmfg/meta_data_ijw_EC_pearson.txt
+par_tmfg/outputs
