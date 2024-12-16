@@ -8,6 +8,12 @@
 #include <math.h>
 #include <limits>
 #include <algorithm>
+#include <sys/stat.h>  // For mkdir
+#include <sys/types.h> // For mkdir
+#include <filesystem>  // For std::filesystem::create_directories (C++17)
+#include <string>
+#include <sstream>
+#include <iomanip> // For std::setw and std::setfill
 
 
 #include "parlay/primitives.h"
@@ -162,36 +168,92 @@ struct ParTMFG{
         return 2*total_cost;   
     }
 
-    void outputPeo(string filename, size_t _n=0){
-        if(_n==0)_n = n;
-        ofstream file_obj;
-        file_obj.open(filename); 
-        for(size_t i=0;i<_n;i++){
-            file_obj << peo[i]+1 << endl;
-        }
-        file_obj.close();
-    }    
 
-    void outputP(string filename, size_t _n=0){
-        if(_n==0)_n = P_ind;
-        ofstream file_obj;
-        file_obj.open(filename); 
-        for(size_t i=0;i<_n;i++){
-            file_obj << get<0>(P[i])+1 << " " << get<1>(P[i])+1 << " " << get<2>(P[i]) << endl;
+    void ensureDirectoryExists(const std::string &filepath) {
+    try {
+        std::filesystem::path dir = std::filesystem::path(filepath).parent_path();
+        if (!std::filesystem::exists(dir)) {
+            std::filesystem::create_directories(dir);
+            std::cout << "Created directory: " << dir << std::endl;
         }
-        file_obj << n << " " << n << " " << 0 << endl;
-        file_obj.close();
-    }   
+    } catch (const std::exception &e) {
+        std::cerr << "Error: Could not create directory for file " << filepath << ": " << e.what() << std::endl;
+    }
+    }
 
-    void outputCliques(string filename, size_t _n=0){
-        if(_n==0)_n = n-3;
-        ofstream file_obj;
-        file_obj.open(filename); 
-        for(size_t i=0;i<_n;i++){
-            file_obj << get<0>(cliques[i]) << " " << get<1>(cliques[i]) << " " << get<2>(cliques[i]) << " " << get<3>(cliques[i]) << endl;
-        }
-        file_obj.close();
-    }    
+
+void outputPeo(const string &filename, size_t _n = 0) {
+    if (_n == 0) _n = n; // Default to `n` if `_n` is not provided
+
+    ensureDirectoryExists(filename);
+
+    ofstream file_obj(filename);
+    if (!file_obj.is_open()) {
+        cerr << "Error: Unable to open file " << filename << " for writing." << endl;
+        return;
+    }
+
+    for (size_t i = 0; i < _n; ++i) {
+        file_obj << peo[i] + 1 << endl; // Output 1-based index
+    }
+
+    file_obj.close();
+    if (file_obj.fail()) {
+        cerr << "Error: Failed to write to file " << filename << endl;
+    } else {
+        cout << "Successfully wrote PEO to " << filename << endl;
+    }
+}
+
+void outputP(const string &filename, size_t _n = 0) {
+    if (_n == 0) _n = P_ind; // Default to `P_ind` if `_n` is not provided
+
+    ensureDirectoryExists(filename);
+
+    ofstream file_obj(filename);
+    if (!file_obj.is_open()) {
+        cerr << "Error: Unable to open file " << filename << " for writing." << endl;
+        return;
+    }
+
+    for (size_t i = 0; i < _n; ++i) {
+        file_obj << get<0>(P[i]) + 1 << " " << get<1>(P[i]) + 1 << " " << get<2>(P[i]) << endl; // Output 1-based indices
+    }
+    file_obj << n << " " << n << " " << 0 << endl; // Include the last line as required by the format
+
+    file_obj.close();
+    if (file_obj.fail()) {
+        cerr << "Error: Failed to write to file " << filename << endl;
+    } else {
+        cout << "Successfully wrote P to " << filename << endl;
+    }
+}
+
+void outputCliques(const string &filename, size_t _n = 0) {
+    if (_n == 0) _n = n - 3; // Default to `n - 3` if `_n` is not provided
+
+    ensureDirectoryExists(filename);
+
+    ofstream file_obj(filename);
+    if (!file_obj.is_open()) {
+        cerr << "Error: Unable to open file " << filename << " for writing." << endl;
+        return;
+    }
+
+    for (size_t i = 0; i < _n; ++i) {
+        file_obj << get<0>(cliques[i]) << " " << get<1>(cliques[i]) << " " << get<2>(cliques[i]) << " " << get<3>(cliques[i]) << endl;
+    }
+
+    file_obj.close();
+    if (file_obj.fail()) {
+        cerr << "Error: Failed to write to file " << filename << endl;
+    } else {
+        cout << "Successfully wrote cliques to " << filename << endl;
+    }
+}
+
+
+
 #ifdef DEBUG
         bool validV(vtx t){
             return t < n && t >= 0;

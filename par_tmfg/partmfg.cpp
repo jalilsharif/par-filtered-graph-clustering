@@ -94,7 +94,7 @@ void ParTMFG<T, PROF>::removeOneV(vtx v){
     auto out2 = make_slice(vertex_list).cut(new_vertex_start, n);
     auto in = make_slice(vertex_list).cut(vertex_start, vertex_start+vertex_num);
 
-    vertex_num = parlay::filter_into(in, out2, [&](vtx i){ 
+    vertex_num = parlay::filter_into_uninitialized(in, out2, [&](vtx i){ 
         return i != v; 
     });
     vertex_start = new_vertex_start;
@@ -111,7 +111,7 @@ void ParTMFG<T, PROF>::filterVbyFlag(){
     auto out2 = make_slice(vertex_list).cut(new_vertex_start, n);
     auto in = make_slice(vertex_list).cut(vertex_start, vertex_start+vertex_num);
 
-    vertex_num = parlay::filter_into(in, out2, [&](vtx i){ 
+    vertex_num = parlay::filter_into_uninitialized(in, out2, [&](vtx i){ 
         return vertex_flag[i]; 
         });
     vertex_start = new_vertex_start;
@@ -358,7 +358,7 @@ void ParTMFG<T, PROF>::init(){
         triangles[3] = triT(t2, t3, t4);
 
         auto all_vertices = parlay::delayed_seq<vtx>(n, [&](size_t i){ return i; });
-        vertex_num = parlay::filter_into(all_vertices, vertex_list, [&](vtx i){ 
+        vertex_num = parlay::filter_into_uninitialized(all_vertices, vertex_list, [&](vtx i){ 
             return i != t1 && i != t2 && i != t3 && i != t4; 
             });
         vertex_start = 0;
@@ -388,7 +388,7 @@ void ParTMFG<T, PROF>::initGainArrayHeap(){
     vtx_heap = vector<gainT>();
     for(face i = 0; i < triangles_ind; i++) {
         heapifyFace(i);
-        triT t = triangles[i];
+        // triT t = triangles[i];
         // issue: heapifyFace (only necessary when use_max_gains_heap is false) does not work properly with highway
         heapEle result = getMinValidHeapEle(i);
         vtx v = result.second;

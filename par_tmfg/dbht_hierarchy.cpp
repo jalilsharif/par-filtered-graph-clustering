@@ -83,7 +83,7 @@ auto unique_into(const R& r, BinaryPredicate eq, R_out&& out) {
   auto b = parlay::tabulate(
     parlay::size(r), [&eq, it = std::begin(r)](size_t i)
       { return (i == 0) || !eq(it[i], it[i - 1]); });
-  return parlay::pack_into(r, b, out);
+  return parlay::pack_into_uninitialized(r, b, out);
 }
 
 template<PARLAY_RANGE_TYPE R, PARLAY_RANGE_TYPE R_out>
@@ -116,7 +116,7 @@ inline void chain_linkage_matrix(TF *finder, TreeChainInfo* info,
       if(sizes[s]>1){
         size_t e = s+sizes[s];
         auto out = make_slice(neighborCopy).cut(s, e);
-        std::size_t new_size = parlay::filter_into(make_slice(neighbor).cut(s, e), out, 
+        std::size_t new_size = parlay::filter_into_uninitialized(make_slice(neighbor).cut(s, e), out, 
                     [&](std::size_t i){return finder->isActive(i);});
         e = s+new_size;
         auto out2 = make_slice(neighbor).cut(s, e);
@@ -147,7 +147,7 @@ inline void chain_linkage_matrix(TF *finder, TreeChainInfo* info,
       if(sizes[s]>1){
         size_t e = s+sizes[s];
         auto out = make_slice(neighbor).cut(s, e);
-        std::size_t new_size = parlay::filter_into(make_slice(neighborCopy).cut(s, e), out, 
+        std::size_t new_size = parlay::filter_into_uninitialized(make_slice(neighborCopy).cut(s, e), out, 
                     [&](std::size_t i){return finder->isActive(i);});
         sizes[s] = new_size;
       }

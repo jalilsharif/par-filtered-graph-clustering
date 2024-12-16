@@ -1,6 +1,12 @@
 #pragma once
 
-#include <immintrin.h>
+#if defined(__x86_64__) || defined(_M_X64)
+// Code specific to AVX2 or x86 architecture
+#include <immintrin.h> // AVX2 headers
+#elif defined(__aarch64__)
+// ARM-specific code (Apple Silicon M2 is ARM64)
+#include <arm_neon.h> // NEON SIMD headers
+#endif
 
 #include "parlay/primitives.h"
 #include "parlay/sequence.h"
@@ -92,6 +98,55 @@ vtx ParTMFG<T, PROF>::getMaxCorrVec(vtx i){
     }
     return ele;
 }
+#elif defined(__aarch64__)
+template<class T, class PROF>
+vtx ParTMFG<T, PROF>::getMaxCorrVec(vtx i) {
+    vtx ele;
+    size_t ind = corr_sorted_list_pointer[i];
+
+    corr_sorted_list_pointer[i]++;
+    ele = corr_list[i * n + ind];
+    if (vertex_flag[ele]) {
+        return ele;
+    }
+    ind = corr_sorted_list_pointer[i];
+
+    while (ind < n - 4) {
+        int32x4_t els = vld1q_s32(reinterpret_cast<const int32_t*>(corr_list.data() + i * n + ind));
+
+        // Store NEON vector to array
+        int32_t els_array[4];
+        vst1q_s32(els_array, els);
+
+        // Gather vertex_flag values for the 4 elements
+        int32_t lane_flags[4] = {
+            vertex_flag[els_array[0]],
+            vertex_flag[els_array[1]],
+            vertex_flag[els_array[2]],
+            vertex_flag[els_array[3]]
+        };
+
+        // Check for valid flags
+        for (int j = 0; j < 4; ++j) {
+            if (lane_flags[j]) {
+                corr_sorted_list_pointer[i] += (j + 1);
+                return corr_list[i * n + ind + j];
+            }
+        }
+        corr_sorted_list_pointer[i] += 4;
+        ind = corr_sorted_list_pointer[i];
+    }
+
+    while (!vertex_flag[ele] && ind < n) {
+        ind = corr_sorted_list_pointer[i];
+        corr_sorted_list_pointer[i]++;
+        ele = corr_list[i * n + ind];
+    }
+
+    return (ind == n && !vertex_flag[ele]) ? n + 1 : ele;
+}
+
+
 #else
 template<class T, class PROF>
 vtx ParTMFG<T, PROF>::getMaxCorrVec(vtx i){

@@ -76,14 +76,15 @@ void runDBHT(SymM<double> *W, SymM<double> *D, size_t n, size_t THRESHOLD, strin
     clusterer.buildHierarchy();
     (*IO::time_output) << "hierarchy total: "<< t.next() << endl;
 
+if(method == "exact" || method == "naive"){
+    computer.outputP("./outputs/Ps/" + dsname + "-" + method + "-P-1");
+    clusterer.outputDendro("./outputs/Zs/" + dsname + "-" + method + "-Z-1" );
+}else{
+    computer.outputP("./outputs/Ps/" + dsname + "-" + method + "-P-" + to_string(THRESHOLD) );
+    clusterer.outputDendro("./outputs/Zs/" + dsname + "-" + method + "-Z-" + to_string(THRESHOLD));
+}
 
-    if(method == "exact" || method == "naive"){
-        computer.outputP("./outputs/Ps/" + dsname + "-" + method + "-P-1");
-        clusterer.outputDendro("./outputs/Zs/" + dsname + "-" + method + "-Z-1" );
-    }else{
-        computer.outputP("./outputs/Ps/" + dsname + "-" + method + "-P-" + to_string(THRESHOLD) );
-        clusterer.outputDendro("./outputs/Zs/" + dsname + "-" + method + "-Z-" + to_string(THRESHOLD));
-    }
+
     (*IO::time_output) << endl;
     cout << "done" << endl;
 
@@ -98,11 +99,11 @@ void runDBHT(SymM<double> *W, SymM<double> *D, size_t n, size_t THRESHOLD, strin
 int main(int argc, char *argv[]) {
 
 
-char* filename; // path to correlation data
+char* filename = nullptr; // path to correlation data
 string dsname; // path to dendrogram output directory
 bool dist_file = false; // whether to use distance file or sqrt(2*(1-w)) by default
 char* distance_filename; // path to distance file
-size_t n; // number of items
+size_t n = 0; // number of items
 string method = "exact"; // method for TMFG construction
 size_t THRESHOLD = 0; // number of nodes inserted per iteration if method = "prefix"
 int round = 1; // number of times to execute 

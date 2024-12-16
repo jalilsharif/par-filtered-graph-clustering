@@ -1,51 +1,56 @@
-CC = g++
-CCFLAGS = -O3 -Wall  -std=c++17 -mcx16 -mavx2 -flto -march=native #-fopt-info-vec-missed   #-DPROFILE -DPARLAY_SEQUENTIAL# -fcilkplus -DCILKP -DPARLAY_CILK 
-CCFLAGS2 = -g -Wall  -std=c++17 -mcx16 -mavx2 -flto -march=native
-PLFLAGS = -pthread $(SDSLLF) -flto #-fcilkplus 
-PARLAY_DIR=../parlaylib/include
-#BOOST_ROOT="../../../../../Downloads/boost_1_82_0"
-HIGHWAY_ROOT="../../highway"
-GTEST_ROOT="../../highway/googletest-src/googletest/include"
+# Compiler
+CC = /usr/bin/clang++
 
+# Platform detection
+UNAME_S := $(shell uname -s)
+UNAME_M := $(shell uname -m)
 
-INCLUDE=-I$(PARLAY_DIR) -I$(BOOST_ROOT) -I$(HIGHWAY_ROOT) -I$(GTEST_ROOT) #-L$(HIGHWAY_ROOT) -lhwy
+# Common Compiler Flags
+COMMON_FLAGS = -O3 -Wall -std=c++17 -stdlib=libc++ -flto
+DEBUG_FLAGS = -g -O2 -Wall -std=c++17 -DDEBUG -fno-inline
 
-SRC = tmfg.cpp partmfg.cpp partmfg_double.cpp 
-NNOBJECTS = $(SRC:.cpp=.o) 
+# Include paths for Parlay and other dependencies
+PARLAY_DIR = /usr/local/include
+HIGHWAY_DIR = /usr/local/include
+GTEST_DIR = /usr/local/include
 
+# Library paths
+LIB_PATH = -L/usr/local/lib
 
-
-tmfg: $(NNOBJECTS) Makefile
-	$(CC) $(PLFLAGS) $(NNOBJECTS) -o $@ -L$(HIGHWAY_ROOT) -lhwy_contrib -lhwy_test -lhwy -L$(HIGHWAY_ROOT)/lib -lgtest -lgtest_main 
-
-tmfg.o: $(SRC) dbht.h linkage.h chain.h partmfg.h
-ifdef highway
-	$(CC) $(INCLUDE) $(CCFLAGS) -c $(SRC) -D HIGHWAY_MAKE=1 
+# Architecture-specific flags
+ifeq ($(UNAME_M), x86_64)
+    # x86 (AVX support)
+    ARCH_FLAGS = -mcx16 -mavx2 -march=native
+else ifeq ($(UNAME_M), arm64)
+    # ARM (Apple Silicon)
+    ARCH_FLAGS = -march=armv8.3-a
 else
-	$(CC) $(INCLUDE) $(CCFLAGS) -c $(SRC)
+    # Generic fallback
+    ARCH_FLAGS = -march=native
 endif
 
+# Include paths
+INCLUDE = -I$(PARLAY_DIR)/parlay -I$(HIGHWAY_DIR) -I$(GTEST_DIR)
 
-dynamic: tmfg_dynamic.o
-	$(CC) $(PLFLAGS) tmfg_dynamic.o partmfg_double.o -o faster
+# Parallelism flags
+PLFLAGS = -pthread
 
-tmfg_dynamic.o: 
-	$(CC) $(INCLUDE) $(CCFLAGS) -c dynamic/tmfg_dynamic.cpp partmfg_double.cpp 
+# Source files
+SRC = tmfg.cpp partmfg.cpp partmfg_double.cpp
+NNOBJECTS = $(SRC:.cpp=.o)
 
+# Target: tmfg
+tmfg: $(NNOBJECTS) Makefile
+	$(CC) $(PLFLAGS) $(NNOBJECTS) -o $@ $(LIB_PATH) -lhwy_contrib -lhwy_test -lhwy -lgtest -lgtest_main
 
-debug: CCFLAGS= -g -O2 -Wall -std=c++17 -DDEBUG -mcx16 -mavx512f -march=native -fno-inline
-# -fcilkplus  -DCILKP -DPARLAY_CILK -DPARLAY_USE_STD_ALLOC  -DPARLAY_SEQUENTIAL 
+# Compile object files
+%.o: %.cpp
+	$(CC) $(INCLUDE) $(COMMON_FLAGS) $(ARCH_FLAGS) -c $< -o $@
 
+# Debug build
+debug: CCFLAGS = $(DEBUG_FLAGS) $(ARCH_FLAGS)
 debug: tmfg
 
-openstack: CCFLAGS = -O3 -Wall  -std=c++17 -mcx16 -mavx2 -flto -march=broadwell
-
-openstack: tmfg
-
-openstack: CCFLAGS = -O3 -Wall  -std=c++17 -mcx16 -mavx2 -flto -march=skylake
-
-
-ec2: tmfg
-
+# Clean target
 clean:
-	rm -rf tmfg faster *.o
+	rm -rf tmfg *.o
