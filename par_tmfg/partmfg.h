@@ -8,15 +8,37 @@
 #include <math.h>
 #include <limits>
 #include <algorithm>
+#include <sys/stat.h>  // For mkdir
+#include <sys/types.h> // For mkdir
+#include <filesystem>  // For std::filesystem::create_directories (C++17)
+#include <string>
+#include <sstream>
+#include <iomanip> // For std::setw and std::setfill
 
 
 #include "parlay/primitives.h"
 #include "parlay/sequence.h"
 #include "parlay/delayed_sequence.h"
+#include "parlay/hash_table.h"
+
+
+#ifdef HIGHWAY_MAKE
+#include "hwy/base.h"
+#include "hwy/contrib/sort/algo-inl.h"
+#include "hwy/contrib/sort/result-inl.h"
+#include "hwy/contrib/sort/traits128-inl.h"
+#include <hwy/contrib/sort/vqsort.h>
+#include <hwy/aligned_allocator.h>
+#include <hwy/highway.h>
+#include <hwy/nanobenchmark.h>
+#include "hwy/tests/test_util-inl.h"
+#endif // HIGHWAY_MAKE
+
 
 #include "gettime.h"
 #include "atomics.h"
 #include "utilities.h"
+#include "IO.h"
 
 #include "heap.h"
 #include "dbht.h"
@@ -24,6 +46,8 @@
 using namespace std;
 using parlay::sequence;	
 using parlay::slice;	
+using parlay::hashtable;
+using parlay::hash_numeric;
 
 template<class T, class PROF> 
 struct ParTMFG{
@@ -47,11 +71,33 @@ struct ParTMFG{
 
     PROF *pf;
 
-    ParTMFG(SymM<T> *W_, size_t n_, PROF *_profiler, bool _use_heap=false):W(W_), n(n_), pf(_profiler), use_heap(_use_heap) {
+    ParTMFG(SymM<T> *W_, size_t n_, PROF *_profiler, bool _use_corrs, bool _use_gains_heap, bool _use_highway, bool _manual_avx):
+    W(W_), n(n_), pf(_profiler), use_corrs(_use_corrs), use_max_gains_heap(_use_gains_heap), use_highway(_use_highway), manual_avx(_manual_avx){
     }
+
+    struct heap_compare{
+    bool operator()(const gainT& i,const gainT& j) const{
+        return get<1>(i) < get<1>(j);
+        }
+    };
+
+
+
 
     // initialize the four cliques
     void init();
+
+
+    // start of insertOne
+    gainT getMaxVtxArray();
+    gainT getMaxVtxHeap();
+
+    void updateInternal(vtx v, face tri, DBHTTMFG<T, PROF> *clusterer);
+
+    // functions at end of insertOne
+    void updateVerticesHeap(vtx v, face tri);
+    void updateVerticesCorrs(vtx v, face tri);
+    void updateVerticesOld(vtx v, face tri);
 
     //require max_clique_gain updated
     void insertOne(DBHTTMFG<T, PROF> *clusterer=nullptr);
@@ -73,9 +119,9 @@ struct ParTMFG{
 
     // insert all vertices in max_clique_gain[insert_list].
     // i.e. the indices in insert_list are indices of max_clique_gain
-    void inertMultiple(sequence<size_t> &insert_list, DBHTTMFG<T, PROF> *clusterer=nullptr);
+    void insertMultiple(sequence<size_t> &insert_list, DBHTTMFG<T, PROF> *clusterer=nullptr);
 
-    inline T computeGain(vtx i, triT triangle){
+    T computeGain(vtx i, triT triangle){
         return getW(i,get<0>(triangle)) + getW(i,get<1>(triangle)) + getW(i,get<2>(triangle));
     }
 
@@ -98,65 +144,116 @@ struct ParTMFG{
         return make_pair(*best_vertex, gain);
     }
 
-    inline void insertToP(vtx i, vtx j, size_t ind){
+    void insertToP(vtx i, vtx j, size_t ind){
         P[ind] = make_tuple(i, j, getW(i, j));
     }
 
-    inline bool hasUninsertedV(){return vertex_num > 0;}    
-    inline T getW(vtx i, vtx j){
-// #ifdef DEBUG
-//         if(i==j){
-//             cout << "i==j in getW" << endl;
-//         }
-// #endif
-        //{return W[i*n + j];}
+    bool hasUninsertedV(){return vertex_num > 0;}  
+
+    T getW(vtx i, vtx j){
         return W->get(i,j);
     }
-    inline size_t getTrianglesNum(){return triangles_ind;}
+
+    size_t getTrianglesNum(){return triangles_ind;}
 
     T computeCost(){
       // compute the total gain here
         T total_cost = 0;
         for(size_t i=0; i<P_ind; ++ i){
-            // print(P[i]);
             total_cost += get<2>(P[i]);
         }
 
-        cout << std::setprecision(20) << 2*total_cost << endl;
-        cout << P_ind << endl; 
+        (*IO::time_output) << std::setprecision(20) << 2*total_cost << endl;
+        (*IO::time_output) << P_ind << endl; 
         return 2*total_cost;   
     }
 
-    void outputPeo(string filename, size_t _n=0){
-        if(_n==0)_n = n;
-        ofstream file_obj;
-        file_obj.open(filename); 
-        for(size_t i=0;i<_n;i++){
-            file_obj << peo[i]+1 << endl;
-        }
-        file_obj.close();
-    }    
 
-    void outputP(string filename, size_t _n=0){
-        if(_n==0)_n = P_ind;
-        ofstream file_obj;
-        file_obj.open(filename); 
-        for(size_t i=0;i<_n;i++){
-            file_obj << get<0>(P[i])+1 << " " << get<1>(P[i])+1 << " " << get<2>(P[i]) << endl;
+    void ensureDirectoryExists(const std::string &filepath) {
+    try {
+        std::filesystem::path dir = std::filesystem::path(filepath).parent_path();
+        if (!std::filesystem::exists(dir)) {
+            std::filesystem::create_directories(dir);
+            std::cout << "Created directory: " << dir << std::endl;
         }
-        file_obj << n << " " << n << " " << 0 << endl;
-        file_obj.close();
-    }   
+    } catch (const std::exception &e) {
+        std::cerr << "Error: Could not create directory for file " << filepath << ": " << e.what() << std::endl;
+    }
+    }
 
-    void outputCliques(string filename, size_t _n=0){
-        if(_n==0)_n = n-3;
-        ofstream file_obj;
-        file_obj.open(filename); 
-        for(size_t i=0;i<_n;i++){
-            file_obj << get<0>(cliques[i]) << " " << get<1>(cliques[i]) << " " << get<2>(cliques[i]) << " " << get<3>(cliques[i]) << endl;
-        }
-        file_obj.close();
-    }    
+
+void outputPeo(const string &filename, size_t _n = 0) {
+    if (_n == 0) _n = n; // Default to `n` if `_n` is not provided
+
+    ensureDirectoryExists(filename);
+
+    ofstream file_obj(filename);
+    if (!file_obj.is_open()) {
+        cerr << "Error: Unable to open file " << filename << " for writing." << endl;
+        return;
+    }
+
+    for (size_t i = 0; i < _n; ++i) {
+        file_obj << peo[i] + 1 << endl; // Output 1-based index
+    }
+
+    file_obj.close();
+    if (file_obj.fail()) {
+        cerr << "Error: Failed to write to file " << filename << endl;
+    } else {
+        cout << "Successfully wrote PEO to " << filename << endl;
+    }
+}
+
+void outputP(const string &filename, size_t _n = 0) {
+    if (_n == 0) _n = P_ind; // Default to `P_ind` if `_n` is not provided
+
+    ensureDirectoryExists(filename);
+
+    ofstream file_obj(filename);
+    if (!file_obj.is_open()) {
+        cerr << "Error: Unable to open file " << filename << " for writing." << endl;
+        return;
+    }
+
+    for (size_t i = 0; i < _n; ++i) {
+        file_obj << get<0>(P[i]) + 1 << " " << get<1>(P[i]) + 1 << " " << get<2>(P[i]) << endl; // Output 1-based indices
+    }
+    file_obj << n << " " << n << " " << 0 << endl; // Include the last line as required by the format
+
+    file_obj.close();
+    if (file_obj.fail()) {
+        cerr << "Error: Failed to write to file " << filename << endl;
+    } else {
+        cout << "Successfully wrote P to " << filename << endl;
+    }
+}
+
+void outputCliques(const string &filename, size_t _n = 0) {
+    if (_n == 0) _n = n - 3; // Default to `n - 3` if `_n` is not provided
+
+    ensureDirectoryExists(filename);
+
+    ofstream file_obj(filename);
+    if (!file_obj.is_open()) {
+        cerr << "Error: Unable to open file " << filename << " for writing." << endl;
+        return;
+    }
+
+    for (size_t i = 0; i < _n; ++i) {
+        file_obj << get<0>(cliques[i]) << " " << get<1>(cliques[i]) << " " << get<2>(cliques[i]) << " " << get<3>(cliques[i]) << endl;
+    }
+
+    file_obj.close();
+    if (file_obj.fail()) {
+        cerr << "Error: Failed to write to file " << filename << endl;
+    } else {
+        cout << "Successfully wrote cliques to " << filename << endl;
+    }
+}
+
+
+
 #ifdef DEBUG
         bool validV(vtx t){
             return t < n && t >= 0;
@@ -201,124 +298,77 @@ struct ParTMFG{
     size_t P_ind = 0;
     size_t max_face_num;
     //// used for heap
-    bool use_heap;
-    sequence<heapT> heaps;
+    
     sequence<heapEle> heap_buffer;
-    sequence<size_t> heap_LR;
-    bool use_sorted_list = true; // change to input
+    sequence<heapEle> corr_heap_buffer;
+
+    sequence<vtx> corr_list;
+
     sequence<size_t> sorted_list_pointer; // stores the next vertex to look at
+    sequence<size_t> corr_sorted_list_pointer;
+
+    vector<gainT> vtx_heap;
+    sequence<bool> invalid_flag;
+    bool use_corrs;
+    bool use_max_gains_heap;
+    bool use_highway;
+
+    bool manual_avx;
+
+
+    sequence<float> max_gains_array;
+
 
 
     //allocate space for heap
-    void initHeap();
     void initGainArrayHeap();
     void updateGainArrayHeap(sequence<size_t> &insert_list);
 
-    inline heapEle negateGain(heapEle ele){
+    heapEle negateGain(heapEle ele){
         return heapEle(-1.0*ele.first, ele.second);
     }
 
-    //prereq: vertex_falg is updated
+    //prereq: vertex_flag is updated
     inline heapEle getMinValidHeapEle(face i){
-// #ifdef PROFILE
-//         timer t;t.start();
-// #endif  
         pf->incFindMinNum();
         heapEle ele;
         do {
-// #ifdef DEBUG
-//     if(heaps[i].size == 0){
-//         cout << "0 size heap!" <<endl;
-//     }
-// #endif
-            if(use_sorted_list){ 
-                size_t ind = sorted_list_pointer[i];
-                sorted_list_pointer[i]++;
-                ele = heap_buffer[i*n+ind];
-            }else{
-            size_t ind = heaps[i].argmin();
+            size_t ind = sorted_list_pointer[i];
+            sorted_list_pointer[i]++;
             ele = heap_buffer[i*n+ind];
-            heaps[i].heap_pop();
-            // ele = *heaps[i].select(0);
-            // heaps[i]=heapT::remove(move(heaps[i]), ele);
-            }
         }
         while ( !vertex_flag[ele.second] );
-// #ifdef PROFILE
-//         // pf->incFindMinTime(t.next());
-//         cout << "find min: "<<t.next()<<endl;
-// #endif  
         return negateGain(ele);
     }
+
+
+    vtx getMaxCorrVec(vtx i);
+    vtx getMaxCorr(vtx i);
+
+
+    // finds the closest uninserted vertex to each of the face's three vertices
+    // and calculates the uninserted vertex with the max gain
+    heapEle getApproxMaxGain(triT triangle, int depth);
+
+    // parallelizable
+    heapEle getFastMaxGain(triT triangle, int depth);
+
     
     // init a heap buffer for triangles[i]
-    inline void heapifyFace(face i){
-// #ifdef PROFILE
-//         timer t1;t1.start();
-// #endif  
-        pf->incHeapifyNum();
-        pf->incHeapifySize(vertex_num);
-        triT t = triangles[i];
-        auto in = make_slice(vertex_list).cut(vertex_start, vertex_start+vertex_num);
-        parlay::parallel_for(0, in.size(), [&](size_t v_ind) {
-            vtx v = in[v_ind];
-            T gain = computeGain(v, t);
-            heap_buffer[i*n+v_ind] = heapEle(-1.0*gain, v);
-        });
-        if(use_sorted_list){
-        // parlay::sort_inplace(make_slice(heap_buffer).cut(i*n, i*n+vertex_num));
-        // parlay::internal::seq_sort_inplace(make_slice(heap_buffer).cut(i*n, i*n+vertex_num), std::less<heapEle>{}, false);
-        parlay::internal::quicksort(make_slice(heap_buffer).cut(i*n, i*n+vertex_num), std::less<heapEle>{});
-        sorted_list_pointer[i] = 0;
-       }else{
-        heaps[i] = binary_min_heap<heapEle>(heap_buffer.data()+ (i*n), vertex_num, heap_LR.data()+ (i*n));
-        heaps[i].heapify();
-        // heaps[i] = heapT();
-        // heaps[i] = heapT::multi_insert(move(heaps[i]), make_slice(heap_buffer).cut(i*n, i*n+vertex_num));
-       }
+    void heapifyFace(face i);
 
-// #ifdef PROFILE
-//         // pf->incHeapifyTime(t1.next());
-//         cout << vertex_num << endl;
-//         cout << "heapify: "<<t1.next() << endl;;
-// #endif  
-    }
+    // sorts the vertices by correlation with a given vertex
+    void heapifyVtx(vtx i);
+
+
 
     //// used for heap
 
     //tested
     cliqueT maxClique();
 
-    void removeOneV(vtx v){
-        //update vertex list
-        //filter and then copy back
-        size_t new_vertex_start = 0;
-        if(vertex_start == 0){
-            new_vertex_start = n;
-        }
-        auto out2 = make_slice(vertex_list).cut(new_vertex_start, n);
-        auto in = make_slice(vertex_list).cut(vertex_start, vertex_start+vertex_num);
+    void removeOneV(vtx v);
+    void filterVbyFlag();
 
-        vertex_num = parlay::filter_into(in, out2, [&](vtx i){ 
-            return i != v; 
-            });
-        vertex_start = new_vertex_start;
-    }
-
-    void filterVbyFlag(){
-        //update vertex list
-        //filter and then copy back
-        size_t new_vertex_start = 0;
-        if(vertex_start == 0){
-            new_vertex_start = n;
-        }
-        auto out2 = make_slice(vertex_list).cut(new_vertex_start, n);
-        auto in = make_slice(vertex_list).cut(vertex_start, vertex_start+vertex_num);
-
-        vertex_num = parlay::filter_into(in, out2, [&](vtx i){ 
-            return vertex_flag[i]; 
-            });
-        vertex_start = new_vertex_start;
-    }
 };
 

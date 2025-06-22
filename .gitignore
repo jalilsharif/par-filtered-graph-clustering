@@ -41,3 +41,27 @@ par_tmfg/outputs/*
 
 */.DS_Store
 pam_example.cpp
+
+**/Makefile
+par_tmfg/ari_outputs/*
+par_tmfg/dynamic/*out.txt
+par_tmfg/dynamic/predicted_labels.txt
+par_tmfg/dynamic/ari*.txt
+
+par_tmfg/timedata.txt
+par_tmfg/*.tsv
+par_tmfg/*.json
+par_tmfg/faster
+par_tmfg/*.py
+
+*/cloud.key
+*/cloud.key.pub
+
+par_tmfg/testing/*
+
+par_tmfg/symmetrical_matrix_ijc_EC_pearson_dissimilarity.bin
+par_tmfg/symmetrical_matrix_ijc_EC_pearson.bin
+par_tmfg/timing.txt
+par_tmfg/ijw_EC_filtered_pearson.txt
+par_tmfg/meta_data_ijw_EC_pearson.txt
+par_tmfg/outputs

@@ -1,7 +1,7 @@
 #pragma once
 
 
-enum STAGE { INTRABB=1, INTERBB=2, INTERC=3, POINT=4 };
+enum STAGE { INTRABB=1, INTERBB=2, INTERC=3, POINT_=4 };
 
 struct Node{
     std::size_t cId;
@@ -12,7 +12,7 @@ struct Node{
     Node *right = nullptr;
     double height = 0;
     std::size_t cluster_num = 1; //number of clusters in this Node, used for inter-cluster
-    STAGE stage = POINT;
+    STAGE stage = POINT_;
 
     Node(std::size_t  t_cid, std::size_t t_round, std::size_t t_idx, Node *t_left, Node *t_right, double _height):
         cId(t_cid),

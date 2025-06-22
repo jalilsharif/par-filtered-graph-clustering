@@ -6,6 +6,7 @@
 #include "dbht_assign.cpp"
 #include "dbht_hierarchy.cpp"
 #include "dbht_outputs.cpp"
+#include "dbht_label.cpp"
 
 
 #ifdef PROFILE

@@ -183,6 +183,6 @@ class MatrixNNFinder {
         flag[i] = isActive(cid);
         activeClustersCopy[i] = activeClusters[i];
       });
-    C = parlay::pack_into(make_slice(activeClustersCopy).cut(0,C), flag, activeClusters);
+    C = parlay::pack_into_uninitialized(make_slice(activeClustersCopy).cut(0,C), flag, activeClusters);
   }
 }; // finder end

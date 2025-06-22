@@ -1,24 +1,56 @@
-CC = g++
-CCFLAGS = -O3  -Wall -std=c++17 -mcx16#-DPROFILE -DPARLAY_SEQUENTIAL# -fcilkplus -DCILKP -DPARLAY_CILK 
-PLFLAGS = -ldl -pthread $(SDSLLF) #-fcilkplus 
-PARLAY_DIR=../parlaylib/include
-BOOST_ROOT=/home/ubuntu/boost_1_78_0
+# Compiler
+CC = /usr/bin/clang++
 
-INCLUDE = -I$(PARLAY_DIR) -I$(BOOST_ROOT)
+# Platform detection
+UNAME_S := $(shell uname -s)
+UNAME_M := $(shell uname -m)
 
-SRC = tmfg.cpp partmfg.cpp partmfg_double.cpp 
-NNOBJECTS = $(SRC:.cpp=.o) 
+# Common Compiler Flags
+COMMON_FLAGS = -O3 -Wall -std=c++17 -stdlib=libc++ -flto
+DEBUG_FLAGS = -g -O2 -Wall -std=c++17 -DDEBUG -fno-inline
 
+# Include paths for Parlay and other dependencies
+PARLAY_DIR = /usr/local/include
+HIGHWAY_DIR = /usr/local/include
+GTEST_DIR = /usr/local/include
+
+# Library paths
+LIB_PATH = -L/usr/local/lib
+
+# Architecture-specific flags
+ifeq ($(UNAME_M), x86_64)
+    # x86 (AVX support)
+    ARCH_FLAGS = -mcx16 -mavx2 -march=native
+else ifeq ($(UNAME_M), arm64)
+    # ARM (Apple Silicon)
+    ARCH_FLAGS = -march=armv8.3-a
+else
+    # Generic fallback
+    ARCH_FLAGS = -march=native
+endif
+
+# Include paths
+INCLUDE = -I$(PARLAY_DIR)/parlay -I$(HIGHWAY_DIR) -I$(GTEST_DIR)
+
+# Parallelism flags
+PLFLAGS = -pthread
+
+# Source files
+SRC = tmfg.cpp partmfg.cpp partmfg_double.cpp
+NNOBJECTS = $(SRC:.cpp=.o)
+
+# Target: tmfg
 tmfg: $(NNOBJECTS) Makefile
-	$(CC) $(PLFLAGS) $(NNOBJECTS) -o $@
+	$(CC) $(PLFLAGS) $(NNOBJECTS) -o $@ $(LIB_PATH) -lhwy_contrib -lhwy_test -lhwy -lgtest -lgtest_main
 
-tmfg.o: $(SRC) dbht.h linkage.h chain.h partmfg.h
-	$(CC) $(INCLUDE) $(CCFLAGS) -c $(SRC)
+# Compile object files
+%.o: %.cpp
+	$(CC) $(INCLUDE) $(COMMON_FLAGS) $(ARCH_FLAGS) -c $< -o $@
 
-debug: CCFLAGS= -g -Wall -std=c++17  -I$(PARLAY_DIR) -DDEBUG -mcx16
-# -fcilkplus  -DCILKP -DPARLAY_CILK -DPARLAY_USE_STD_ALLOC  -DPARLAY_SEQUENTIAL 
-
+# Debug build
+debug: CCFLAGS = $(DEBUG_FLAGS) $(ARCH_FLAGS)
 debug: tmfg
 
+# Clean target
 clean:
-	rm -f tmfg *.o
+	rm -rf tmfg *.o

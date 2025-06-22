@@ -52,7 +52,7 @@ struct TreeChainInfo{
       flag[i] = getNN(cid) == NO_NEIGH || getNN(getNN(cid)) == NO_NEIGH ;// only merged clusters have negative neighbor in chain ok because -2 won't be in active clusters
       is_terminal[cid] = flag[i];
     });
-    chainNum = parlay::pack_into(make_slice(finder->activeClusters).cut(0,C), flag, terminal_nodes);
+    chainNum = parlay::pack_into_uninitialized(make_slice(finder->activeClusters).cut(0,C), flag, terminal_nodes);
   }
 
 };
